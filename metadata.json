@@ -1,0 +1,5 @@
+{
+  "name": "PhoneCom - E-commerce MVP",
+  "description": "A feature-complete MVP for a phone e-commerce store based on the Agile/OOAD project report. Includes Role-Based Access (Guest, Customer, Staff, Admin), Order Lifecycle Management, and Inventory Tracking.",
+  "requestFramePermissions": []
+}

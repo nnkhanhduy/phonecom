@@ -1,0 +1,1712 @@
+import React, { useState, useEffect, useContext, createContext, useMemo } from 'react';
+import {
+  ShoppingCart, User as UserIcon, LogOut, Package,
+  Search, Filter, Plus, Minus, X, CheckCircle,
+  AlertCircle, Truck, ClipboardList, Settings,
+  ChevronDown, MapPin, Tag, Mail, Lock, ArrowRight, UserPlus, User as UserIconSmall,
+  Star, Smartphone, CreditCard, LayoutDashboard, Users, DollarSign, TrendingUp, Activity
+} from 'lucide-react';
+import {
+  Role, OrderStatus, Product, User, CartItem, Order,
+  InventoryTx, StaffNote, Address, Variant
+} from './types';
+
+import { api } from './api';
+
+// --- APP STATE CONTEXT ---
+interface Notification {
+  message: string;
+  type: 'success' | 'error';
+  id: number;
+}
+
+interface AppState {
+  currentUser: User | null;
+  allUsers: User[];
+  products: Product[];
+  cart: CartItem[];
+  orders: Order[];
+  view: string;
+  currentProduct: Product | null;
+  notifications: Notification[];
+}
+
+interface AppContextType extends AppState {
+  login: (email: string, role?: Role) => void;
+  register: (fullName: string, email: string, password: string, role: Role) => void;
+  logout: () => void;
+  addToCart: (variant: Variant, product: Product) => void;
+  removeFromCart: (itemId: string) => void;
+  updateCartQty: (itemId: string, delta: number) => void;
+  placeOrder: (shippingAddress: Address) => void;
+  updateOrderStatus: (orderId: string, status: OrderStatus, note?: string) => void;
+  setView: (view: string) => void;
+  setCurrentProduct: (product: Product | null) => void;
+  addStaffNote: (orderId: string, noteContent: string) => void;
+  updateInventory: (variantId: string, newStock: number) => void;
+  showNotification: (message: string, type?: 'success' | 'error') => void;
+  addAddress: (address: Omit<Address, 'id' | 'isDefault'>) => void;
+}
+
+const AppContext = createContext<AppContextType | undefined>(undefined);
+
+const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [view, setView] = useState('home');
+  const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  // Initial Data Fetching
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      const [productsData, usersData] = await Promise.all([
+        api.products.getAll(),
+        api.users.getAll().catch(() => []) // Catch if auth fails/admin only
+      ]);
+      setProducts(productsData);
+      setAllUsers(usersData);
+    } catch (error) {
+      console.error("Failed to load data:", error);
+    }
+  };
+
+  // Reload user data when current user changes (e.g., after login)
+  useEffect(() => {
+    if (currentUser) {
+      loadUserData(currentUser.id);
+    } else {
+      setCart([]);
+      setOrders([]);
+    }
+  }, [currentUser?.id]);
+
+  const loadUserData = async (userId: string) => {
+    try {
+      const [cartData, ordersData, userData] = await Promise.all([
+        api.users.getCart(userId),
+        api.users.getOrders(userId),
+        api.users.getById(userId)
+      ]);
+      setCart(cartData);
+      setOrders(ordersData);
+      // Update current user details (e.g. addresses)
+      setCurrentUser(userData);
+    } catch (error) {
+      console.error("Failed to load user data", error);
+    }
+  };
+
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { message, type, id }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 3000);
+  };
+
+  const login = async (email: string, role?: Role) => {
+    try {
+      // In a real app, this would be a POST /login call
+      // Here we simulate by fetching all users and finding the match
+      const users = await api.users.getAll();
+      setAllUsers(users); // Refresh users list
+
+      const user = users.find(u => u.email === email && (!role || u.role === role));
+
+      if (user) {
+        setCurrentUser(user);
+        setView(user.role === Role.CUSTOMER ? 'home' : 'dashboard');
+        showNotification(`Welcome back, ${user.fullName}`);
+        loadUserData(user.id);
+      } else {
+        showNotification("Invalid credentials or user not found", "error");
+      }
+    } catch (error) {
+      showNotification("Login failed", "error");
+    }
+  };
+
+  const register = async (fullName: string, email: string, password: string, role: Role) => {
+    try {
+      const newUser = await api.users.create({ fullName, email, role });
+      setAllUsers(prev => [...prev, newUser]);
+      setCurrentUser(newUser);
+
+      if (role === Role.CUSTOMER) {
+        setView('home');
+      } else {
+        setView('dashboard');
+      }
+
+      showNotification(`Welcome, ${fullName}! Account created successfully.`);
+    } catch (error: any) {
+      showNotification(error.message || "Registration failed", "error");
+    }
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    setCart([]);
+    setOrders([]);
+    setView('home');
+    showNotification("Logged out successfully");
+  };
+
+  const addToCart = async (variant: Variant, product: Product) => {
+    if (!currentUser) return;
+    try {
+      await api.cart.add(currentUser.id, variant.id, 1);
+      await loadUserData(currentUser.id); // Refresh cart
+      showNotification(`Added ${product.name} to cart`);
+    } catch (error: any) {
+      showNotification(error.message || "Failed to add to cart", "error");
+    }
+  };
+
+  const removeFromCart = async (itemId: string) => {
+    if (!currentUser) return;
+    try {
+      await api.cart.remove(itemId);
+      await loadUserData(currentUser.id); // Refresh
+      showNotification("Item removed from cart");
+    } catch (error) {
+      showNotification("Failed to remove item", "error");
+    }
+  };
+
+  const updateCartQty = async (itemId: string, delta: number) => {
+    if (!currentUser) return;
+    const item = cart.find(c => c.id === itemId);
+    if (!item) return;
+
+    const newQty = item.quantity + delta;
+    if (newQty < 1) return; // Or trigger remove?
+
+    try {
+      await api.cart.updateQty(itemId, newQty);
+      await loadUserData(currentUser.id); // Refresh
+    } catch (error: any) {
+      showNotification(error.message || "Failed to update quantity", "error");
+    }
+  };
+
+  const placeOrder = async (shippingAddress: Address) => {
+    if (!currentUser) return;
+    try {
+      const formattedAddress = `${shippingAddress.recipientName}, ${shippingAddress.phone}, ${shippingAddress.addressLine}, ${shippingAddress.city}`;
+      await api.orders.create(currentUser.id, formattedAddress);
+
+      await loadUserData(currentUser.id); // Refresh cart and orders
+      setView('orders');
+      showNotification('Order placed successfully!');
+    } catch (error: any) {
+      showNotification(error.message || "Failed to place order", "error");
+    }
+  };
+
+  const updateOrderStatus = async (orderId: string, status: OrderStatus, noteContent?: string) => {
+    try {
+      await api.orders.updateStatus(orderId, status);
+      if (noteContent && currentUser) {
+        await api.staffNotes.create(orderId, currentUser.id, noteContent);
+      }
+
+      // Refresh orders (for everyone, but mainly for the viewer)
+      // If staff/admin, we might need to fetch ALL orders, not just current user's
+      if (currentUser?.role === Role.STAFF || currentUser?.role === Role.ADMIN) {
+        const allOrders = await api.orders.getAll();
+        setOrders(allOrders);
+        // Also refresh products for inventory updates
+        const updatedProducts = await api.products.getAll();
+        setProducts(updatedProducts);
+      } else {
+        // Customer view
+        if (currentUser) loadUserData(currentUser.id);
+      }
+
+      showNotification(`Order status updated to ${status}`);
+    } catch (error: any) {
+      showNotification(error.message || "Failed to update status", "error");
+    }
+  };
+
+  const addStaffNote = async (orderId: string, noteContent: string) => {
+    if (!currentUser) return;
+    try {
+      await api.staffNotes.create(orderId, currentUser.id, noteContent);
+      // Refresh orders to see notes
+      if (currentUser.role === Role.STAFF || currentUser.role === Role.ADMIN) {
+        const allOrders = await api.orders.getAll();
+        setOrders(allOrders);
+      } else {
+        if (currentUser) loadUserData(currentUser.id);
+      }
+      showNotification('Note added');
+    } catch (error) {
+      showNotification("Failed to add note", "error");
+    }
+  };
+
+  const updateInventory = async (variantId: string, newStock: number) => {
+    try {
+      await api.variants.updateInventory(variantId, newStock);
+      // Refresh products
+      const updatedProducts = await api.products.getAll();
+      setProducts(updatedProducts);
+      showNotification('Inventory updated');
+    } catch (error) {
+      showNotification("Failed to update inventory", "error");
+    }
+  };
+
+  const addAddress = async (addressData: Omit<Address, 'id' | 'isDefault'>) => {
+    if (!currentUser) return;
+    try {
+      await api.addresses.create({
+        ...addressData,
+        userId: currentUser.id,
+        isDefault: currentUser.addresses.length === 0 // Make default if first one
+      });
+      // Refresh user data
+      const user = await api.users.getById(currentUser.id);
+      setCurrentUser(user);
+      showNotification("Address added successfully");
+    } catch (error) {
+      showNotification("Failed to add address", "error");
+    }
+  };
+
+  // Admin/Staff loads all orders on dashboard view
+  useEffect(() => {
+    if ((view === 'dashboard' || view === 'orders') && (currentUser?.role === Role.STAFF || currentUser?.role === Role.ADMIN)) {
+      api.orders.getAll().then(setOrders).catch(console.error);
+    }
+  }, [view, currentUser]);
+
+  return (
+    <AppContext.Provider value={{
+      currentUser, allUsers, products, cart, orders, view, currentProduct, notifications,
+      login, register, logout, addToCart, removeFromCart, updateCartQty, placeOrder,
+      updateOrderStatus, setView, setCurrentProduct, addStaffNote, updateInventory, showNotification, addAddress
+    }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+const useAppContext = () => {
+  const context = useContext(AppContext);
+  if (!context) throw new Error("useAppContext must be used within AppProvider");
+  return context;
+};
+
+// --- COMPONENTS ---
+
+const Header: React.FC = () => {
+  const { currentUser, cart, logout, setView, view } = useAppContext();
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  return (
+    <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16 items-center">
+          <div className="flex items-center cursor-pointer group" onClick={() => setView('home')}>
+            <div className="bg-indigo-600 p-2 rounded-xl shadow-lg shadow-indigo-200 group-hover:bg-indigo-700 transition-colors">
+              <Smartphone className="h-6 w-6 text-white" />
+            </div>
+            <span className="ml-3 text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">PhoneCom</span>
+          </div>
+
+          <div className="flex items-center space-x-4">
+            {currentUser ? (
+              <>
+                <div className="hidden md:flex flex-col items-end mr-2">
+                  <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">{currentUser.role}</span>
+                  <span className="text-sm font-medium text-gray-700">{currentUser.fullName}</span>
+                </div>
+
+                {currentUser.role === Role.CUSTOMER && (
+                  <>
+                    <button
+                      onClick={() => setView('orders')}
+                      className={`text-sm font-medium transition-colors ${view === 'orders' ? 'text-indigo-600' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                      My Orders
+                    </button>
+                    <button
+                      onClick={() => setView('cart')}
+                      className="relative p-2 text-gray-500 hover:text-indigo-600 transition-colors"
+                    >
+                      <ShoppingCart className="h-6 w-6" />
+                      {cartItemCount > 0 && (
+                        <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-5 w-5 text-xs font-bold leading-none text-white transform bg-red-500 rounded-full border-2 border-white">
+                          {cartItemCount}
+                        </span>
+                      )}
+                    </button>
+                  </>
+                )}
+
+                {(currentUser.role === Role.STAFF || currentUser.role === Role.ADMIN) && (
+                  <button
+                    onClick={() => setView('dashboard')}
+                    className={`flex items-center px-3 py-1.5 rounded-md transition-colors ${view === 'dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}
+                  >
+                    <LayoutDashboard className="h-4 w-4 mr-2" />
+                    <span className="text-sm font-medium">Dashboard</span>
+                  </button>
+                )}
+
+                <div className="h-6 w-px bg-gray-200 mx-2"></div>
+
+                <button
+                  onClick={logout}
+                  className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                  title="Logout"
+                >
+                  <LogOut className="h-5 w-5" />
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setView('login')}
+                className="inline-flex items-center px-6 py-2 border border-transparent text-sm font-medium rounded-full text-white bg-indigo-600 shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all transform hover:scale-105"
+              >
+                Sign In
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+};
+
+const HeroSection: React.FC = () => {
+  return (
+    <div className="relative bg-white overflow-hidden mb-12">
+      <div className="max-w-7xl mx-auto">
+        <div className="relative z-10 pb-8 bg-white sm:pb-16 md:pb-20 lg:max-w-2xl lg:w-full lg:pb-28 xl:pb-32">
+          <svg
+            className="hidden lg:block absolute right-0 inset-y-0 h-full w-48 text-white transform translate-x-1/2"
+            fill="currentColor"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <polygon points="50,0 100,0 50,100 0,100" />
+          </svg>
+
+          <main className="mt-10 mx-auto max-w-7xl px-4 sm:mt-12 sm:px-6 md:mt-16 lg:mt-20 lg:px-8 xl:mt-28">
+            <div className="sm:text-center lg:text-left">
+              <h1 className="text-4xl tracking-tight font-extrabold text-gray-900 sm:text-5xl md:text-6xl">
+                <span className="block xl:inline">Premium Technology</span>{' '}
+                <span className="block text-indigo-600 xl:inline">for Modern Life</span>
+              </h1>
+              <p className="mt-3 text-base text-gray-500 sm:mt-5 sm:text-lg sm:max-w-xl sm:mx-auto md:mt-5 md:text-xl lg:mx-0">
+                Discover the latest smartphones with cutting-edge features. From professional photography to AI-powered assistance, find the perfect device for you.
+              </p>
+            </div>
+          </main>
+        </div>
+      </div>
+      <div className="lg:absolute lg:inset-y-0 lg:right-0 lg:w-1/2">
+        <img
+          className="h-56 w-full object-cover sm:h-72 md:h-96 lg:w-full lg:h-full"
+          src="https://images.unsplash.com/photo-1616348436168-de43ad0db179?auto=format&fit=crop&q=80&w=1600"
+          alt="Smartphones"
+        />
+        <div className="absolute inset-0 bg-indigo-900/10 mix-blend-multiply"></div>
+      </div>
+    </div>
+  );
+};
+
+const ProductList: React.FC = () => {
+  const { products, setView, setCurrentProduct, addToCart, currentUser, showNotification } = useAppContext();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [brandFilter, setBrandFilter] = useState<string>('All');
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesBrand = brandFilter === 'All' || p.brand === brandFilter;
+    return matchesSearch && matchesBrand;
+  });
+
+  const uniqueBrands = ['All', ...Array.from(new Set(products.map(p => p.brand)))];
+
+  const handleQuickAdd = (e: React.MouseEvent, product: Product) => {
+    e.stopPropagation(); // Prevent going to detail view
+
+    if (!currentUser) {
+      showNotification("Please login to purchase", "error");
+      setView('login');
+      return;
+    }
+
+    if (currentUser.role !== Role.CUSTOMER) {
+      showNotification("Only Customers can purchase", "error");
+      return;
+    }
+
+    // Find first available variant
+    const availableVariant = product.variants.find(v => v.stockQuantity > 0);
+
+    if (availableVariant) {
+      addToCart(availableVariant, product);
+    } else {
+      showNotification("Product is out of stock", "error");
+    }
+  };
+
+  return (
+    <>
+      <HeroSection />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 -mt-16 relative z-20">
+        <div className="bg-white rounded-xl shadow-xl p-6 mb-12">
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="relative w-full md:w-96">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                className="block w-full pl-10 pr-3 py-3 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-colors sm:text-sm"
+                placeholder="Search phones..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2 md:pb-0 scrollbar-hide">
+              <span className="text-sm font-medium text-gray-500 mr-2 flex items-center"><Filter className="h-4 w-4 mr-1" /> Brands:</span>
+              {uniqueBrands.map(brand => (
+                <button
+                  key={brand}
+                  onClick={() => setBrandFilter(brand)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${brandFilter === brand ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  {brand}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+          {filteredProducts.map(product => {
+            const minPrice = Math.min(...product.variants.map(v => v.price));
+            const totalStock = product.variants.reduce((acc, v) => acc + v.stockQuantity, 0);
+
+            return (
+              <div
+                key={product.id}
+                className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group cursor-pointer border border-gray-100 flex flex-col h-full transform hover:-translate-y-1"
+                onClick={() => { setCurrentProduct(product); setView('product-detail'); }}
+              >
+                <div className="aspect-w-4 aspect-h-3 bg-gray-100 relative overflow-hidden">
+                  <img
+                    src={product.variants[0]?.imageUrl}
+                    alt={product.name}
+                    className="w-full h-64 object-cover object-center transform group-hover:scale-105 transition-transform duration-500"
+                  />
+                  {totalStock === 0 && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <span className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg transform -rotate-12">OUT OF STOCK</span>
+                    </div>
+                  )}
+                </div>
+                <div className="p-6 flex-1 flex flex-col">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="text-xs font-bold text-indigo-600 uppercase tracking-wide mb-1">{product.brand}</p>
+                      <h3 className="text-lg font-bold text-gray-900 leading-tight group-hover:text-indigo-700 transition-colors">{product.name}</h3>
+                    </div>
+                    <div className="flex items-center bg-green-50 px-2 py-1 rounded text-green-700">
+                      <Tag className="h-3 w-3 mr-1" />
+                      <span className="text-sm font-bold">${minPrice}</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm text-gray-500 line-clamp-2 flex-1">{product.description}</p>
+
+                  <div className="mt-6 pt-4 border-t border-gray-50 flex justify-between items-center gap-2">
+                    <span className={`text-xs font-semibold flex items-center ${totalStock > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      <div className={`w-2 h-2 rounded-full mr-2 ${totalStock > 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      {totalStock > 0 ? `${totalStock} Available` : 'Unavailable'}
+                    </span>
+
+                    <div className="flex gap-2">
+                      {/* Quick Add Button */}
+                      {totalStock > 0 && (
+                        <button
+                          onClick={(e) => handleQuickAdd(e, product)}
+                          className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-indigo-600 hover:text-white hover:border-transparent transition-all shadow-sm"
+                          title="Quick Add to Cart"
+                        >
+                          <ShoppingCart className="h-5 w-5" />
+                        </button>
+                      )}
+
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCurrentProduct(product); setView('product-detail'); }}
+                        className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-indigo-600 transition-colors shadow-sm"
+                      >
+                        Details
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {filteredProducts.length === 0 && (
+          <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-gray-100">
+            <div className="bg-gray-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Package className="h-10 w-10 text-gray-400" />
+            </div>
+            <h3 className="mt-2 text-lg font-medium text-gray-900">No products found</h3>
+            <p className="mt-1 text-gray-500">We couldn't find anything matching your search.</p>
+            <button onClick={() => { setSearchTerm(''); setBrandFilter('All'); }} className="mt-4 text-indigo-600 font-medium hover:text-indigo-800">Clear filters</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
+
+const ProductDetail: React.FC = () => {
+  const { currentProduct, addToCart, setView, currentUser, showNotification } = useAppContext();
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(
+    currentProduct?.variants[0]?.id || null
+  );
+
+  if (!currentProduct) return null;
+
+  const selectedVariant = currentProduct.variants.find(v => v.id === selectedVariantId);
+
+  const handleAddToCart = () => {
+    if (!selectedVariant) return;
+    if (!currentUser) {
+      showNotification("Please login to purchase", "error");
+      setView('login');
+      return;
+    }
+    if (currentUser.role !== Role.CUSTOMER) {
+      showNotification("Only Customers can purchase. Please login as a Customer.", "error");
+      return;
+    }
+    addToCart(selectedVariant, currentProduct);
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <button
+        onClick={() => setView('home')}
+        className="mb-8 text-sm font-medium text-gray-500 hover:text-indigo-600 flex items-center transition-colors"
+      >
+        <ArrowRight className="h-4 w-4 mr-1 transform rotate-180" /> Back to browsing
+      </button>
+
+      <div className="bg-white rounded-3xl shadow-xl overflow-hidden lg:grid lg:grid-cols-2 lg:gap-0">
+        <div className="p-12 bg-gray-50 flex items-center justify-center border-r border-gray-100 relative">
+          <div className="absolute top-8 left-8">
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-white text-gray-800 shadow-sm border border-gray-200">
+              {currentProduct.brand}
+            </span>
+          </div>
+          <img
+            src={selectedVariant?.imageUrl || currentProduct.variants[0].imageUrl}
+            alt={selectedVariant?.name}
+            className="max-h-[500px] w-auto object-contain drop-shadow-2xl transform transition-transform duration-500 hover:scale-105"
+          />
+        </div>
+
+        <div className="p-10 lg:p-14 flex flex-col justify-center">
+          <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">{currentProduct.name}</h1>
+          <div className="mt-4 flex items-center space-x-2">
+            <div className="flex text-yellow-400">
+              {[...Array(5)].map((_, i) => <Star key={i} className="h-5 w-5 fill-current" />)}
+            </div>
+            <span className="text-gray-400 text-sm">(Mock Reviews)</span>
+          </div>
+
+          <p className="mt-6 text-gray-600 text-lg leading-relaxed">{currentProduct.description}</p>
+
+          <div className="mt-10 pt-10 border-t border-gray-100">
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-4">Select Configuration</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {currentProduct.variants.map(variant => (
+                <div
+                  key={variant.id}
+                  onClick={() => setSelectedVariantId(variant.id)}
+                  className={`cursor-pointer group relative rounded-xl border-2 p-4 flex justify-between items-center transition-all ${selectedVariantId === variant.id ? 'border-indigo-600 bg-indigo-50/50' : 'border-gray-100 hover:border-gray-300 hover:bg-gray-50'}`}
+                >
+                  <div className="flex flex-col">
+                    <span className="font-bold text-gray-900">{variant.capacity}</span>
+                    <span className="text-sm text-gray-500">{variant.color}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="block font-bold text-indigo-700 text-lg">${variant.price}</span>
+                    <span className={`text-xs font-medium ${variant.stockQuantity > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {variant.stockQuantity > 0 ? 'In Stock' : 'Sold Out'}
+                    </span>
+                  </div>
+                  {selectedVariantId === variant.id && (
+                    <div className="absolute -top-2 -right-2 bg-indigo-600 text-white p-1 rounded-full shadow-sm">
+                      <CheckCircle className="h-4 w-4" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-10 flex flex-col gap-4">
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100">
+              <span className="text-gray-600 font-medium">Total Price:</span>
+              <span className="text-3xl font-bold text-gray-900">${selectedVariant?.price || 0}</span>
+            </div>
+
+            <button
+              onClick={handleAddToCart}
+              disabled={!selectedVariant || selectedVariant.stockQuantity === 0}
+              className={`w-full flex items-center justify-center px-8 py-4 border border-transparent text-lg font-bold rounded-xl text-white shadow-lg transition-all transform hover:-translate-y-1
+                ${(!selectedVariant || selectedVariant.stockQuantity === 0)
+                  ? 'bg-gray-300 cursor-not-allowed'
+                  : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/30'}`}
+            >
+              {selectedVariant?.stockQuantity === 0 ? 'Out of Stock' : (
+                <><ShoppingCart className="mr-2 h-5 w-5" /> Add to Cart</>
+              )}
+            </button>
+            {!currentUser && (
+              <p className="text-center text-sm text-gray-500 bg-yellow-50 p-2 rounded text-yellow-800">Please <button onClick={() => setView('login')} className="underline font-bold">sign in</button> to purchase this item.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CartView: React.FC = () => {
+  const { cart, removeFromCart, updateCartQty, setView } = useAppContext();
+  const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  if (cart.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-32 text-center">
+        <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-gray-100 mb-6">
+          <ShoppingCart className="h-10 w-10 text-gray-400" />
+        </div>
+        <h2 className="text-3xl font-bold text-gray-900">Your cart is empty</h2>
+        <p className="mt-2 text-gray-500 mb-8">Looks like you haven't added anything to your cart yet.</p>
+        <button
+          onClick={() => setView('home')}
+          className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+        >
+          Start Shopping
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <h1 className="text-3xl font-extrabold text-gray-900 mb-10">Shopping Cart</h1>
+      <div className="lg:grid lg:grid-cols-12 lg:gap-x-12 lg:items-start">
+        <div className="lg:col-span-8">
+          <div className="bg-white shadow-sm rounded-2xl overflow-hidden border border-gray-200">
+            <ul className="divide-y divide-gray-200">
+              {cart.map((item) => (
+                <li key={item.id} className="p-6 sm:flex items-center hover:bg-gray-50 transition-colors">
+                  <div className="flex-shrink-0 w-24 h-24 border border-gray-200 rounded-lg overflow-hidden">
+                    <img src={item.imageUrl} alt={item.productName} className="w-full h-full object-center object-cover" />
+                  </div>
+                  <div className="ml-4 flex-1 flex flex-col sm:ml-6 justify-between h-24">
+                    <div className="flex justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          {item.productName}
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-1">{item.variantName}</p>
+                      </div>
+                      <p className="text-lg font-bold text-gray-900">${item.price}</p>
+                    </div>
+
+                    <div className="flex justify-between items-end">
+                      <div className="flex items-center border border-gray-300 rounded-lg bg-white">
+                        <button onClick={() => updateCartQty(item.id, -1)} className="p-2 hover:bg-gray-100 rounded-l-lg text-gray-600"><Minus className="h-4 w-4" /></button>
+                        <span className="px-4 py-1 text-gray-900 font-medium border-l border-r border-gray-300 min-w-[3rem] text-center">{item.quantity}</span>
+                        <button onClick={() => updateCartQty(item.id, 1)} className="p-2 hover:bg-gray-100 rounded-r-lg text-gray-600"><Plus className="h-4 w-4" /></button>
+                      </div>
+                      <button
+                        onClick={() => removeFromCart(item.id)}
+                        className="text-sm font-medium text-red-600 hover:text-red-500 flex items-center p-2 rounded hover:bg-red-50 transition-colors"
+                      >
+                        <X className="h-4 w-4 mr-1" /> Remove
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="lg:col-span-4 mt-16 lg:mt-0">
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Order Summary</h2>
+            <dl className="space-y-4">
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-600">Subtotal</dt>
+                <dd className="font-medium text-gray-900">${total.toLocaleString()}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-600">Shipping Estimate</dt>
+                <dd className="font-medium text-gray-900">$10.00</dd>
+              </div>
+              <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
+                <dt className="text-xl font-bold text-gray-900">Total</dt>
+                <dd className="text-xl font-bold text-indigo-600">${(total + 10).toLocaleString()}</dd>
+              </div>
+            </dl>
+
+            <button
+              onClick={() => setView('checkout')}
+              className="mt-8 w-full bg-indigo-600 border border-transparent rounded-xl shadow-lg shadow-indigo-200 py-4 px-4 text-lg font-bold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all transform hover:-translate-y-1"
+            >
+              Proceed to Checkout
+            </button>
+            <div className="mt-4 flex items-center justify-center text-sm text-gray-500">
+              <Lock className="h-4 w-4 mr-1" /> Secure Checkout
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CheckoutView: React.FC = () => {
+  const { currentUser, placeOrder, setView, showNotification, addAddress } = useAppContext();
+  const [selectedAddress, setSelectedAddress] = useState<string>('');
+  const [isAdding, setIsAdding] = useState(false);
+  const [formData, setFormData] = useState({
+    recipientName: '',
+    phone: '',
+    addressLine: '',
+    city: ''
+  });
+
+  // Effect to select default or first address initially
+  useEffect(() => {
+    if (currentUser && currentUser.addresses.length > 0 && !selectedAddress) {
+      // Prefer default, otherwise first
+      const defaultAddr = currentUser.addresses.find(a => a.isDefault);
+      setSelectedAddress(defaultAddr ? defaultAddr.id : currentUser.addresses[0].id);
+    }
+  }, [currentUser, selectedAddress]);
+
+  const handleSaveAddress = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.recipientName || !formData.phone || !formData.addressLine || !formData.city) {
+      showNotification("Please fill in all fields", "error");
+      return;
+    }
+    addAddress(formData);
+    setIsAdding(false);
+    setFormData({ recipientName: '', phone: '', addressLine: '', city: '' });
+  };
+
+  const handlePlaceOrder = () => {
+    const address = currentUser?.addresses.find(a => a.id === selectedAddress);
+    if (!address) {
+      showNotification("Please select a valid address", "error");
+      return;
+    }
+    placeOrder(address);
+  };
+
+  if (!currentUser) return null;
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <button onClick={() => setView('cart')} className="mb-8 text-sm text-gray-500 hover:text-gray-900 flex items-center">
+        <ArrowRight className="h-4 w-4 mr-1 transform rotate-180" /> Back to Cart
+      </button>
+
+      <div className="lg:grid lg:grid-cols-2 lg:gap-x-12 xl:gap-x-16">
+        <div>
+          <div className="mb-10">
+            <h2 className="text-2xl font-bold text-gray-900">Shipping Information</h2>
+            <p className="mt-1 text-sm text-gray-500">Where should we send your order?</p>
+          </div>
+
+          <div className="space-y-4">
+            {isAdding ? (
+              <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-inner">
+                <h4 className="text-lg font-bold text-gray-900 mb-4">Add New Address</h4>
+                <form onSubmit={handleSaveAddress} className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Name</label>
+                    <input
+                      type="text"
+                      className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                      value={formData.recipientName}
+                      onChange={e => setFormData({ ...formData, recipientName: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                      value={formData.phone}
+                      onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Address Line</label>
+                    <input
+                      type="text"
+                      className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                      value={formData.addressLine}
+                      onChange={e => setFormData({ ...formData, addressLine: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+                    <input
+                      type="text"
+                      className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                      value={formData.city}
+                      onChange={e => setFormData({ ...formData, city: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setIsAdding(false)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm"
+                    >
+                      Save Address
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-4">
+                  {currentUser.addresses.map(addr => (
+                    <div
+                      key={addr.id}
+                      className={`relative p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedAddress === addr.id ? 'border-indigo-600 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300 hover:bg-gray-50'}`}
+                      onClick={() => setSelectedAddress(addr.id)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="block text-sm font-bold text-gray-900">{addr.recipientName}</span>
+                          <span className="block text-sm text-gray-600 mt-1">{addr.addressLine}, {addr.city}</span>
+                          <span className="block text-sm text-gray-500 mt-1">{addr.phone}</span>
+                        </div>
+                        {selectedAddress === addr.id && (
+                          <CheckCircle className="h-5 w-5 text-indigo-600" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    onClick={() => setIsAdding(true)}
+                    className="flex items-center justify-center p-5 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-indigo-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all"
+                  >
+                    <Plus className="h-5 w-5 mr-2" />
+                    Add New Address
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="mt-10 pt-10 border-t border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Payment Method</h2>
+            <div className="bg-white border-2 border-indigo-100 rounded-xl p-6 flex items-center shadow-sm">
+              <div className="bg-green-100 p-3 rounded-full mr-4">
+                <Truck className="h-6 w-6 text-green-600" />
+              </div>
+              <div>
+                <p className="font-bold text-gray-900">Cash on Delivery (COD)</p>
+                <p className="text-sm text-gray-500">Pay securely when you receive your order.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-12 lg:mt-0">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-8 sticky top-24">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Order Summary</h2>
+
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+              By confirming, your order will be placed immediately. Stock is reserved but only deducted upon staff confirmation.
+            </p>
+
+            <button
+              onClick={handlePlaceOrder}
+              disabled={!selectedAddress}
+              className={`w-full py-4 px-6 border border-transparent rounded-xl shadow-lg text-lg font-bold text-white transition-all transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 
+                  ${!selectedAddress ? 'bg-gray-300 cursor-not-allowed shadow-none hover:translate-y-0' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`}
+            >
+              Confirm Order
+            </button>
+
+            <div className="mt-6 flex justify-center space-x-4 text-gray-400">
+              <CreditCard className="h-6 w-6" />
+              <Truck className="h-6 w-6" />
+              <Package className="h-6 w-6" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const OrderHistory: React.FC = () => {
+  const { orders, currentUser, updateOrderStatus } = useAppContext();
+  const myOrders = orders.filter(o => o.userId === currentUser?.id);
+
+  const getStatusColor = (status: OrderStatus) => {
+    switch (status) {
+      case OrderStatus.PENDING: return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case OrderStatus.CONFIRMED: return 'bg-blue-100 text-blue-800 border-blue-200';
+      case OrderStatus.COMPLETED: return 'bg-green-100 text-green-800 border-green-200';
+      case OrderStatus.CANCELLED: return 'bg-red-100 text-red-800 border-red-200';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <h1 className="text-3xl font-extrabold text-gray-900 mb-8">My Orders</h1>
+      {myOrders.length === 0 ? (
+        <div className="text-center py-20 bg-white rounded-2xl border border-gray-200 shadow-sm">
+          <ClipboardList className="mx-auto h-12 w-12 text-gray-300" />
+          <p className="mt-4 text-lg text-gray-500">You haven't placed any orders yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {myOrders.map(order => (
+            <div key={order.id} className="bg-white shadow-md rounded-2xl overflow-hidden border border-gray-100 transition-shadow hover:shadow-lg">
+              <div className="px-6 py-5 bg-gray-50/50 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-lg font-bold text-gray-900">Order #{order.id}</h3>
+                    <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(order.status)}`}>
+                      {order.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">Placed on {new Date(order.createdAt).toLocaleDateString()}</p>
+                </div>
+
+                {order.status === OrderStatus.PENDING && (
+                  <button
+                    onClick={() => updateOrderStatus(order.id, OrderStatus.CANCELLED)}
+                    className="text-sm font-medium text-red-600 hover:text-red-800 bg-white border border-red-200 hover:bg-red-50 px-4 py-2 rounded-lg transition-colors"
+                  >
+                    Cancel Order
+                  </button>
+                )}
+              </div>
+              <div className="px-6 py-6">
+                <div className="flex flex-col md:flex-row gap-8">
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Items</h4>
+                    <ul className="divide-y divide-gray-100">
+                      {order.items.map(item => (
+                        <li key={item.id} className="py-3 flex justify-between">
+                          <div className="flex items-center">
+                            <div className="h-10 w-10 bg-gray-100 rounded-md mr-3"></div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{item.productName}</p>
+                              <p className="text-xs text-gray-500">{item.variantName} x {item.quantity}</p>
+                            </div>
+                          </div>
+                          <p className="text-sm font-bold text-gray-900">${item.price * item.quantity}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="md:w-1/3 bg-gray-50 rounded-xl p-5">
+                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Summary</h4>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Subtotal</span>
+                        <span className="font-medium">${order.totalAmount}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Shipping</span>
+                        <span className="font-medium">$10</span>
+                      </div>
+                      <div className="flex justify-between text-base pt-3 border-t border-gray-200">
+                        <span className="font-bold text-gray-900">Total</span>
+                        <span className="font-bold text-indigo-600">${order.totalAmount + 10}</span>
+                      </div>
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-gray-200">
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Shipping To</h4>
+                      <p className="text-sm text-gray-700">{order.shippingAddress}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const StaffDashboard: React.FC = () => {
+  const { orders, products, currentUser, allUsers, updateOrderStatus, addStaffNote, updateInventory } = useAppContext();
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'overview'>('orders');
+  const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
+
+  const isAdmin = currentUser?.role === Role.ADMIN;
+
+  // Set initial tab based on role
+  useEffect(() => {
+    if (isAdmin && activeTab === 'orders') {
+      // Keep default as orders or switch to overview if preferred, sticking to orders for now unless manually changed
+    }
+  }, [isAdmin]);
+
+  const handleNoteChange = (orderId: string, value: string) => {
+    setNoteInputs(prev => ({ ...prev, [orderId]: value }));
+  };
+
+  const submitNote = (orderId: string) => {
+    if (noteInputs[orderId]) {
+      addStaffNote(orderId, noteInputs[orderId]);
+      setNoteInputs(prev => ({ ...prev, [orderId]: '' }));
+    }
+  };
+
+  // --- Dashboard Statistics Calculation ---
+  const stats = useMemo(() => {
+    const totalRevenue = orders
+      .filter(o => o.status === OrderStatus.COMPLETED || o.status === OrderStatus.CONFIRMED)
+      .reduce((sum, o) => sum + o.totalAmount + 10, 0); // Including shipping
+
+    const activeOrders = orders.filter(o => o.status === OrderStatus.PENDING || o.status === OrderStatus.CONFIRMED).length;
+    const totalCustomers = allUsers.filter(u => u.role === Role.CUSTOMER).length;
+
+    let lowStockCount = 0;
+    products.forEach(p => {
+      p.variants.forEach(v => {
+        if (v.stockQuantity < 5) lowStockCount++;
+      });
+    });
+
+    return { totalRevenue, activeOrders, totalCustomers, lowStockCount };
+  }, [orders, allUsers, products]);
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {isAdmin ? 'Admin Dashboard' : 'Staff Dashboard'}
+          </h1>
+          <p className="text-sm text-gray-500">Manage orders, inventory, and view analytics.</p>
+        </div>
+
+        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg self-start overflow-x-auto">
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'overview' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+            >
+              Overview
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab('orders')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'orders' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+          >
+            Order Management
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'inventory' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+            >
+              Inventory Management
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isAdmin && activeTab === 'overview' && (
+        <div className="space-y-6 animate-slide-in-right">
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex items-center">
+              <div className="p-3 bg-green-100 rounded-full mr-4">
+                <DollarSign className="h-6 w-6 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Total Revenue</p>
+                <p className="text-2xl font-bold text-gray-900">${stats.totalRevenue.toLocaleString()}</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex items-center">
+              <div className="p-3 bg-blue-100 rounded-full mr-4">
+                <Activity className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Active Orders</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.activeOrders}</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex items-center">
+              <div className="p-3 bg-purple-100 rounded-full mr-4">
+                <Users className="h-6 w-6 text-purple-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Total Customers</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalCustomers}</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex items-center">
+              <div className="p-3 bg-orange-100 rounded-full mr-4">
+                <AlertCircle className="h-6 w-6 text-orange-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Low Stock Alerts</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.lowStockCount}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <TrendingUp className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900">Analytics Preview</h3>
+            <p className="text-gray-500 mt-2">More detailed charts and graphs would appear here in a production environment.</p>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'orders' && (
+        <div className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200 animate-slide-in-right">
+          <ul className="divide-y divide-gray-200">
+            {orders.length === 0 && <li className="p-8 text-center text-gray-500">No active orders found.</li>}
+            {orders.map(order => (
+              <li key={order.id} className="p-6 hover:bg-gray-50 transition duration-150 ease-in-out">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="text-lg font-bold text-indigo-600">Order #{order.id}</span>
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide
+                           ${order.status === OrderStatus.PENDING ? 'bg-yellow-100 text-yellow-800' :
+                          order.status === OrderStatus.CONFIRMED ? 'bg-blue-100 text-blue-800' :
+                            order.status === OrderStatus.COMPLETED ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {order.status}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
+                    <p className="text-xs text-gray-400">{new Date(order.createdAt).toLocaleString()}</p>
+                    <div className="mt-2 text-sm text-gray-600">
+                      {order.items.length} items | Total: <span className="font-bold">${order.totalAmount + 10}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                    {order.status === OrderStatus.PENDING && (
+                      <>
+                        <button
+                          onClick={() => updateOrderStatus(order.id, OrderStatus.CONFIRMED)}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 shadow-sm transition-colors"
+                        >
+                          Confirm Order
+                        </button>
+                        <button
+                          onClick={() => updateOrderStatus(order.id, OrderStatus.CANCELLED)}
+                          className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {order.status === OrderStatus.CONFIRMED && (
+                      <button
+                        onClick={() => updateOrderStatus(order.id, OrderStatus.COMPLETED)}
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 shadow-sm transition-colors"
+                      >
+                        Mark Delivered
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notes Section */}
+                <div className="mt-6 bg-gray-50 rounded-lg p-4 border border-gray-100">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Staff Notes</h4>
+                  <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
+                    {order.notes.length === 0 && <p className="text-xs text-gray-400 italic">No notes yet.</p>}
+                    {order.notes.map(note => (
+                      <div key={note.id} className="text-xs bg-white p-2 rounded border border-gray-100">
+                        <span className="font-bold text-gray-700">{note.authorName}:</span> {note.content}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 border border-gray-300 rounded-md text-xs p-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      placeholder="Add internal note..."
+                      value={noteInputs[order.id] || ''}
+                      onChange={(e) => handleNoteChange(order.id, e.target.value)}
+                    />
+                    <button onClick={() => submitNote(order.id)} className="px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded-md text-xs font-bold text-gray-700 transition-colors">Add</button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {activeTab === 'inventory' && isAdmin && (
+        <div className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200 animate-slide-in-right">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Product</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Variant</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Stock Level</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Adjust</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {products.flatMap(p => p.variants.map(v => ({ ...v, productName: p.name }))).map((variant) => (
+                  <tr key={variant.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{variant.productName}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{variant.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${variant.stockQuantity < 5 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                        {variant.stockQuantity} Units
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => updateInventory(variant.id, Math.max(0, variant.stockQuantity - 1))}
+                          className="p-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => updateInventory(variant.id, variant.stockQuantity + 5)}
+                          className="p-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const RegisterView: React.FC = () => {
+  const { register, setView } = useAppContext();
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState<Role>(Role.CUSTOMER);
+  const [error, setError] = useState('');
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters");
+      return;
+    }
+    setError('');
+    register(fullName, email, password, role);
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-indigo-50 via-white to-blue-50">
+      <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-gray-100">
+        <div className="text-center">
+          <div className="mx-auto h-16 w-16 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-2xl shadow-lg flex items-center justify-center transform rotate-3">
+            <UserPlus className="h-8 w-8 text-white" />
+          </div>
+          <h2 className="mt-6 text-3xl font-extrabold text-gray-900 tracking-tight">
+            Create account
+          </h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Join PhoneCom today
+          </p>
+        </div>
+
+        <form className="mt-8 space-y-6" onSubmit={handleRegister}>
+          {error && (
+            <div className="rounded-lg bg-red-50 p-4 border border-red-100 flex items-center">
+              <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
+              <span className="text-sm font-medium text-red-800">{error}</span>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Full Name</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <UserIconSmall className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                  placeholder="John Doe"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Email address</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="email"
+                  required
+                  className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Password</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                    placeholder="••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Confirm</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                    placeholder="••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Role</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Settings className="h-5 w-5 text-gray-400" />
+                </div>
+                <select
+                  className="appearance-none block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm bg-white transition-all"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as Role)}
+                >
+                  <option value={Role.CUSTOMER}>Customer</option>
+                  <option value={Role.STAFF}>Staff</option>
+                  <option value={Role.ADMIN}>Admin</option>
+                </select>
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                  <ChevronDown className="h-4 w-4 text-gray-400" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all shadow-lg shadow-indigo-200"
+          >
+            Create Account
+          </button>
+        </form>
+
+        <div className="text-center mt-6">
+          <p className="text-sm text-gray-600">
+            Already have an account?{' '}
+            <button onClick={() => setView('login')} className="font-bold text-indigo-600 hover:text-indigo-500 transition-colors">
+              Sign in
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LoginView: React.FC = () => {
+  const { login, setView } = useAppContext();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    login(email);
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-indigo-50 via-white to-blue-50">
+      <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-gray-100">
+        <div className="text-center">
+          <div className="mx-auto h-16 w-16 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-2xl shadow-lg flex items-center justify-center transform -rotate-3">
+            <Package className="h-8 w-8 text-white" />
+          </div>
+          <h2 className="mt-6 text-3xl font-extrabold text-gray-900 tracking-tight">
+            Welcome back
+          </h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Sign in to access your premium account
+          </p>
+        </div>
+
+        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Email address</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="email"
+                  required
+                  className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Password</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="password"
+                  required
+                  className="appearance-none block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm transition-all"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <input
+                id="remember-me"
+                name="remember-me"
+                type="checkbox"
+                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
+              />
+              <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900 cursor-pointer">
+                Remember me
+              </label>
+            </div>
+
+            <div className="text-sm">
+              <a href="#" className="font-medium text-indigo-600 hover:text-indigo-500 transition-colors">
+                Forgot password?
+              </a>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-bold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all shadow-lg shadow-indigo-200"
+          >
+            Sign in
+          </button>
+        </form>
+
+        <div className="relative my-8">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-200" />
+          </div>
+          <div className="relative flex justify-center text-sm">
+            <span className="px-4 bg-white text-gray-400 font-medium">
+              Or continue with demo
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3">
+          <button
+            onClick={() => login('customer@demo.com', Role.CUSTOMER)}
+            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
+          >
+            <div className="flex items-center">
+              <div className="h-2 w-2 bg-blue-500 rounded-full mr-3"></div>
+              Customer Account
+            </div>
+            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
+          </button>
+
+          <button
+            onClick={() => login('staff@demo.com', Role.STAFF)}
+            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
+          >
+            <div className="flex items-center">
+              <div className="h-2 w-2 bg-purple-500 rounded-full mr-3"></div>
+              Staff Account
+            </div>
+            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
+          </button>
+
+          <button
+            onClick={() => login('admin@demo.com', Role.ADMIN)}
+            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
+          >
+            <div className="flex items-center">
+              <div className="h-2 w-2 bg-gray-800 rounded-full mr-3"></div>
+              Admin Account
+            </div>
+            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
+          </button>
+        </div>
+
+        <div className="text-center mt-6">
+          <p className="text-sm text-gray-600">
+            Don't have an account?{' '}
+            <button onClick={() => setView('register')} className="font-bold text-indigo-600 hover:text-indigo-500 transition-colors">
+              Sign up
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN LAYOUT ---
+
+const ToastContainer: React.FC = () => {
+  const { notifications } = useAppContext();
+
+  if (notifications.length === 0) return null;
+
+  return (
+    <div className="fixed bottom-6 right-6 z-[60] flex flex-col space-y-3 pointer-events-none">
+      {notifications.map(n => (
+        <div
+          key={n.id}
+          className={`pointer-events-auto px-6 py-4 rounded-xl shadow-2xl text-white flex items-center space-x-3 transform transition-all duration-300 animate-slide-in-right border border-white/10 backdrop-blur-md
+            ${n.type === 'error' ? 'bg-red-500/90' : 'bg-green-500/90'}`}
+        >
+          {n.type === 'error' ? <AlertCircle size={20} className="text-white" /> : <CheckCircle size={20} className="text-white" />}
+          <span className="font-medium text-sm">{n.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <AppProvider>
+      <div className="min-h-screen bg-gray-50 font-sans text-gray-900 selection:bg-indigo-100 selection:text-indigo-900">
+        <MainContent />
+        <ToastContainer />
+      </div>
+    </AppProvider>
+  );
+};
+
+const MainContent: React.FC = () => {
+  const { view } = useAppContext();
+
+  return (
+    <>
+      <Header />
+      <main className="pb-16">
+        {view === 'home' && <ProductList />}
+        {view === 'product-detail' && <ProductDetail />}
+        {view === 'cart' && <CartView />}
+        {view === 'checkout' && <CheckoutView />}
+        {view === 'orders' && <OrderHistory />}
+        {view === 'dashboard' && <StaffDashboard />}
+        {view === 'login' && <LoginView />}
+        {view === 'register' && <RegisterView />}
+      </main>
+    </>
+  );
+};
+
+export default App;

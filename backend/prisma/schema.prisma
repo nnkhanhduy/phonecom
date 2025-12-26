@@ -1,0 +1,193 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums matching types.ts
+enum Role {
+  GUEST
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+// Table 1: User
+model User {
+  id        String    @id @default(uuid())
+  fullName  String
+  email     String    @unique
+  role      Role      @default(CUSTOMER)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  // Relations
+  addresses  Address[]
+  cartItems  CartItem[]
+  orders     Order[]
+  staffNotes StaffNote[]
+
+  @@map("users")
+}
+
+// Table 2: Address
+model Address {
+  id            String   @id @default(uuid())
+  userId        String
+  recipientName String
+  phone         String
+  addressLine   String
+  city          String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
+  @@index([userId])
+}
+
+// Table 3: Product
+model Product {
+  id          String    @id @default(uuid())
+  name        String
+  brand       String
+  description String    @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  variants Variant[]
+
+  @@map("products")
+}
+
+// Table 4: Variant
+model Variant {
+  id            String   @id @default(uuid())
+  productId     String
+  name          String   // e.g., "128GB - Midnight Black"
+  color         String
+  capacity      String
+  price         Float
+  stockQuantity Int      @default(0)
+  imageUrl      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  inventoryTxs  InventoryTx[]
+
+  @@map("variants")
+  @@index([productId])
+}
+
+// Table 5: CartItem
+model CartItem {
+  id        String   @id @default(uuid())
+  userId    String
+  variantId String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("cart_items")
+  @@unique([userId, variantId])
+  @@index([userId])
+  @@index([variantId])
+}
+
+// Table 6: Order
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  totalAmount     Float
+  status          OrderStatus @default(PENDING)
+  shippingAddress String      @db.Text // Snapshot of address
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items      OrderItem[]
+  staffNotes StaffNote[]
+
+  @@map("orders")
+  @@index([userId])
+  @@index([status])
+}
+
+// Table 7: OrderItem
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  variantId   String
+  productName String   // Snapshot
+  variantName String   // Snapshot
+  price       Float    // Snapshot at time of order
+  quantity    Int
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@map("order_items")
+  @@index([orderId])
+  @@index([variantId])
+}
+
+// Table 8: StaffNote
+model StaffNote {
+  id        String   @id @default(uuid())
+  orderId   String
+  authorId  String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  
+  // Relations
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  author User  @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@map("staff_notes")
+  @@index([orderId])
+}
+
+// Table 9: InventoryTx (Inventory Transaction)
+model InventoryTx {
+  id        String   @id @default(uuid())
+  variantId String
+  qtyChange Int      // Negative for deduction, positive for restock
+  reason    String
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+  
+  // Relations
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_transactions")
+  @@index([variantId])
+  @@index([date])
+}

@@ -7,10 +7,10 @@ export enum Role {
 }
 
 export enum OrderStatus {
-  PENDING = 'Pending',       // Initial state
-  CONFIRMED = 'Confirmed',   // Staff approved, stock deducted
-  COMPLETED = 'Completed',   // Delivered
-  CANCELLED = 'Cancelled',   // Cancelled by user or staff
+  PENDING = 'PENDING',       // Initial state
+  CONFIRMED = 'CONFIRMED',   // Staff approved, stock deducted
+  COMPLETED = 'COMPLETED',   // Delivered
+  CANCELLED = 'CANCELLED',   // Cancelled by user or staff
 }
 
 // Entities

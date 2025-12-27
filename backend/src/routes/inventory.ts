@@ -6,7 +6,7 @@ const router = Router();
 // Record inventory transaction (manual restock)
 router.post('/transactions', async (req, res) => {
     try {
-        const { variantId, qtyChange, reason } = req.body;
+        const { variantId, qtyChange, reason, type, createdBy } = req.body; // type and createdBy required
 
         // Update variant stock and create transaction
         const result = await prisma.$transaction(async (tx) => {
@@ -22,9 +22,11 @@ router.post('/transactions', async (req, res) => {
             const transaction = await tx.inventoryTx.create({
                 data: {
                     variantId,
-                    qtyChange,
+                    quantity: qtyChange, // Schema field is quantity
+                    type: type || 'ADJUSTMENT', // Default if missing
                     reason,
-                    date: new Date(),
+                    createdBy: createdBy || 'admin', // Placeholder or fail if strict
+                    createdAt: new Date(),
                 },
             });
 
@@ -34,9 +36,9 @@ router.post('/transactions', async (req, res) => {
         res.status(201).json({
             id: result.transaction.id,
             variantId: result.transaction.variantId,
-            qtyChange: result.transaction.qtyChange,
+            qtyChange: result.transaction.quantity,
             reason: result.transaction.reason,
-            date: result.transaction.date.toISOString(),
+            date: result.transaction.createdAt.toISOString(),
             newStockQuantity: result.variant.stockQuantity,
         });
     } catch (error: any) {
@@ -52,7 +54,7 @@ router.get('/transactions', async (req, res) => {
         const transactions = await prisma.inventoryTx.findMany({
             where: {
                 variantId: variantId ? String(variantId) : undefined,
-                date: {
+                createdAt: {
                     gte: startDate ? new Date(String(startDate)) : undefined,
                     lte: endDate ? new Date(String(endDate)) : undefined,
                 },
@@ -64,7 +66,7 @@ router.get('/transactions', async (req, res) => {
                     },
                 },
             },
-            orderBy: { date: 'desc' },
+            orderBy: { createdAt: 'desc' },
             take: 100, // Limit to recent 100 transactions
         });
 
@@ -73,9 +75,9 @@ router.get('/transactions', async (req, res) => {
             variantId: tx.variantId,
             productName: tx.variant.product.name,
             variantName: tx.variant.name,
-            qtyChange: tx.qtyChange,
+            qtyChange: tx.quantity,
             reason: tx.reason,
-            date: tx.date.toISOString(),
+            date: tx.createdAt.toISOString(),
             currentStock: tx.variant.stockQuantity,
         }));
 

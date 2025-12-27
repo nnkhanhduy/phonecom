@@ -11,7 +11,7 @@ router.post('/', async (req, res) => {
         const note = await prisma.staffNote.create({
             data: {
                 orderId,
-                authorId,
+                staffId: authorId, // Mapped to staffId
                 content,
             },
             include: {
@@ -53,6 +53,31 @@ router.get('/order/:orderId', async (req, res) => {
         }));
 
         res.json(formattedNotes);
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// Update staff note
+router.put('/:id', async (req, res) => {
+    try {
+        const { content } = req.body;
+        const note = await prisma.staffNote.update({
+            where: { id: req.params.id },
+            data: { content },
+            include: {
+                author: {
+                    select: { fullName: true },
+                },
+            },
+        });
+
+        res.json({
+            id: note.id,
+            content: note.content,
+            createdAt: note.createdAt.toISOString(),
+            authorName: note.author.fullName,
+        });
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }

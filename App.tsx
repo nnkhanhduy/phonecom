@@ -4,7 +4,8 @@ import {
   Search, Filter, Plus, Minus, X, CheckCircle,
   AlertCircle, Truck, ClipboardList, Settings,
   ChevronDown, MapPin, Tag, Mail, Lock, ArrowRight, UserPlus, User as UserIconSmall,
-  Star, Smartphone, CreditCard, LayoutDashboard, Users, DollarSign, TrendingUp, Activity
+  Star, Smartphone, CreditCard, LayoutDashboard, Users, DollarSign, TrendingUp, Activity,
+  Edit2, Trash2, Image
 } from 'lucide-react';
 import {
   Role, OrderStatus, Product, User, CartItem, Order,
@@ -12,6 +13,11 @@ import {
 } from './types';
 
 import { api } from './api';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart as ReBarChart, Bar,
+  PieChart as RePieChart, Pie, Cell, Legend
+} from 'recharts';
 
 // --- APP STATE CONTEXT ---
 interface Notification {
@@ -43,9 +49,13 @@ interface AppContextType extends AppState {
   setView: (view: string) => void;
   setCurrentProduct: (product: Product | null) => void;
   addStaffNote: (orderId: string, noteContent: string) => void;
+  editStaffNote: (noteId: string, content: string) => void;
+  deleteStaffNote: (noteId: string) => void;
   updateInventory: (variantId: string, newStock: number) => void;
+  updateUserRole: (userId: string, newRole: Role) => Promise<void>;
+  updateProduct: (productId: string, data: any) => Promise<void>;
+  updateVariant: (variantId: string, data: any) => Promise<void>;
   showNotification: (message: string, type?: 'success' | 'error') => void;
-  addAddress: (address: Omit<Address, 'id' | 'isDefault'>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -119,11 +129,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const users = await api.users.getAll();
       setAllUsers(users); // Refresh users list
 
-      const user = users.find(u => u.email === email && (!role || u.role === role));
+      const user = users.find(u => u.email === email && (!role || u.role.name === role));
 
       if (user) {
         setCurrentUser(user);
-        setView(user.role === Role.CUSTOMER ? 'home' : 'dashboard');
+        if (user.role.name === Role.CUSTOMER) {
+          setView('home');
+        } else if (user.role.name === Role.ADMIN) {
+          setView('admin-dashboard');
+        } else {
+          setView('dashboard');
+        }
         showNotification(`Welcome back, ${user.fullName}`);
         loadUserData(user.id);
       } else {
@@ -134,17 +150,13 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  const register = async (fullName: string, email: string, password: string, role: Role) => {
+  const register = async (fullName: string, email: string, password: string) => {
     try {
-      const newUser = await api.users.create({ fullName, email, role });
+      const newUser = await api.users.create({ fullName, email, role: Role.CUSTOMER });
       setAllUsers(prev => [...prev, newUser]);
       setCurrentUser(newUser);
 
-      if (role === Role.CUSTOMER) {
-        setView('home');
-      } else {
-        setView('dashboard');
-      }
+      setView('home');
 
       showNotification(`Welcome, ${fullName}! Account created successfully.`);
     } catch (error: any) {
@@ -201,7 +213,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const placeOrder = async (shippingAddress: Address) => {
     if (!currentUser) return;
     try {
-      const formattedAddress = `${shippingAddress.recipientName}, ${shippingAddress.phone}, ${shippingAddress.addressLine}, ${shippingAddress.city}`;
+      const formattedAddress = `${shippingAddress.recipientName}, ${shippingAddress.phoneNumber}, ${shippingAddress.line1}, ${shippingAddress.ward}, ${shippingAddress.district}, ${shippingAddress.province}`;
       await api.orders.create(currentUser.id, formattedAddress);
 
       await loadUserData(currentUser.id); // Refresh cart and orders
@@ -221,7 +233,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       // Refresh orders (for everyone, but mainly for the viewer)
       // If staff/admin, we might need to fetch ALL orders, not just current user's
-      if (currentUser?.role === Role.STAFF || currentUser?.role === Role.ADMIN) {
+      if (currentUser?.role.name === Role.STAFF || currentUser?.role.name === Role.ADMIN) {
         const allOrders = await api.orders.getAll();
         setOrders(allOrders);
         // Also refresh products for inventory updates
@@ -243,7 +255,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     try {
       await api.staffNotes.create(orderId, currentUser.id, noteContent);
       // Refresh orders to see notes
-      if (currentUser.role === Role.STAFF || currentUser.role === Role.ADMIN) {
+      if (currentUser.role.name === Role.STAFF || currentUser.role.name === Role.ADMIN) {
         const allOrders = await api.orders.getAll();
         setOrders(allOrders);
       } else {
@@ -255,9 +267,39 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
+  const editStaffNote = async (noteId: string, content: string) => {
+    try {
+      await api.staffNotes.update(noteId, content);
+      if (currentUser?.role.name === Role.STAFF || currentUser?.role.name === Role.ADMIN) {
+        const allOrders = await api.orders.getAll();
+        setOrders(allOrders);
+      } else {
+        if (currentUser) loadUserData(currentUser.id);
+      }
+      showNotification('Note updated');
+    } catch (error) {
+      showNotification("Failed to update note", "error");
+    }
+  };
+
+  const deleteStaffNote = async (noteId: string) => {
+    try {
+      await api.staffNotes.delete(noteId);
+      if (currentUser?.role.name === Role.STAFF || currentUser?.role.name === Role.ADMIN) {
+        const allOrders = await api.orders.getAll();
+        setOrders(allOrders);
+      } else {
+        if (currentUser) loadUserData(currentUser.id);
+      }
+      showNotification('Note deleted');
+    } catch (error) {
+      showNotification("Failed to delete note", "error");
+    }
+  };
+
   const updateInventory = async (variantId: string, newStock: number) => {
     try {
-      await api.variants.updateInventory(variantId, newStock);
+      await api.variants.update(variantId, { stockQuantity: newStock });
       // Refresh products
       const updatedProducts = await api.products.getAll();
       setProducts(updatedProducts);
@@ -267,7 +309,29 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  const addAddress = async (addressData: Omit<Address, 'id' | 'isDefault'>) => {
+  const updateVariant = async (variantId: string, data: any) => {
+    try {
+      await api.variants.update(variantId, data);
+      const updatedProducts = await api.products.getAll();
+      setProducts(updatedProducts);
+      showNotification('Variant updated');
+    } catch (error) {
+      showNotification("Failed to update variant", "error");
+    }
+  };
+
+  const updateProduct = async (productId: string, data: any) => {
+    try {
+      await api.products.update(productId, data);
+      const updatedProducts = await api.products.getAll();
+      setProducts(updatedProducts);
+      showNotification('Product updated successfully');
+    } catch (error) {
+      showNotification("Failed to update product", "error");
+    }
+  };
+
+  const addAddress = async (addressData: Omit<Address, 'id' | 'isDefault' | 'userId'>) => {
     if (!currentUser) return;
     try {
       await api.addresses.create({
@@ -284,10 +348,25 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  // Admin/Staff loads all orders on dashboard view
+  const updateUserRole = async (userId: string, newRole: Role) => {
+    try {
+      const updatedUser = await api.users.update(userId, { role: newRole });
+      setAllUsers(prev => prev.map(u => u.id === userId ? updatedUser : u));
+      showNotification(`Role updated to ${newRole}`);
+    } catch (error: any) {
+      showNotification(error.message || "Failed to update role", "error");
+    }
+  };
+
+  // Admin/Staff loads data on dashboard views
   useEffect(() => {
-    if ((view === 'dashboard' || view === 'orders') && (currentUser?.role === Role.STAFF || currentUser?.role === Role.ADMIN)) {
-      api.orders.getAll().then(setOrders).catch(console.error);
+    if ((view === 'dashboard' || view === 'admin-dashboard' || view === 'orders')) {
+      if (currentUser?.role.name === Role.STAFF || currentUser?.role.name === Role.ADMIN) {
+        api.orders.getAll().then(setOrders).catch(console.error);
+        if (currentUser?.role.name === Role.ADMIN) {
+          api.users.getAll().then(setAllUsers).catch(console.error);
+        }
+      }
     }
   }, [view, currentUser]);
 
@@ -295,7 +374,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     <AppContext.Provider value={{
       currentUser, allUsers, products, cart, orders, view, currentProduct, notifications,
       login, register, logout, addToCart, removeFromCart, updateCartQty, placeOrder,
-      updateOrderStatus, setView, setCurrentProduct, addStaffNote, updateInventory, showNotification, addAddress
+      updateOrderStatus, setView, setCurrentProduct, addStaffNote, editStaffNote, deleteStaffNote, updateInventory, showNotification, addAddress, updateUserRole, updateProduct, updateVariant
     }}>
       {children}
     </AppContext.Provider>
@@ -329,11 +408,11 @@ const Header: React.FC = () => {
             {currentUser ? (
               <>
                 <div className="hidden md:flex flex-col items-end mr-2">
-                  <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">{currentUser.role}</span>
+                  <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">{currentUser.role.name}</span>
                   <span className="text-sm font-medium text-gray-700">{currentUser.fullName}</span>
                 </div>
 
-                {currentUser.role === Role.CUSTOMER && (
+                {currentUser.role.name === Role.CUSTOMER && (
                   <>
                     <button
                       onClick={() => setView('orders')}
@@ -355,13 +434,23 @@ const Header: React.FC = () => {
                   </>
                 )}
 
-                {(currentUser.role === Role.STAFF || currentUser.role === Role.ADMIN) && (
+                {(currentUser.role.name === Role.STAFF) && (
                   <button
                     onClick={() => setView('dashboard')}
                     className={`flex items-center px-3 py-1.5 rounded-md transition-colors ${view === 'dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}
                   >
                     <LayoutDashboard className="h-4 w-4 mr-2" />
-                    <span className="text-sm font-medium">Dashboard</span>
+                    <span className="text-sm font-medium">Staff Dashboard</span>
+                  </button>
+                )}
+
+                {(currentUser.role.name === Role.ADMIN) && (
+                  <button
+                    onClick={() => setView('admin-dashboard')}
+                    className={`flex items-center px-3 py-1.5 rounded-md transition-colors ${view === 'admin-dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}
+                  >
+                    <LayoutDashboard className="h-4 w-4 mr-2" />
+                    <span className="text-sm font-medium">Admin Dashboard</span>
                   </button>
                 )}
 
@@ -452,7 +541,7 @@ const ProductList: React.FC = () => {
       return;
     }
 
-    if (currentUser.role !== Role.CUSTOMER) {
+    if (currentUser.role.name !== Role.CUSTOMER) {
       showNotification("Only Customers can purchase", "error");
       return;
     }
@@ -515,7 +604,7 @@ const ProductList: React.FC = () => {
               >
                 <div className="aspect-w-4 aspect-h-3 bg-gray-100 relative overflow-hidden">
                   <img
-                    src={product.variants[0]?.imageUrl}
+                    src={product.imageUrl || product.variants[0]?.imageUrl}
                     alt={product.name}
                     className="w-full h-64 object-cover object-center transform group-hover:scale-105 transition-transform duration-500"
                   />
@@ -602,7 +691,7 @@ const ProductDetail: React.FC = () => {
       setView('login');
       return;
     }
-    if (currentUser.role !== Role.CUSTOMER) {
+    if (currentUser.role.name !== Role.CUSTOMER) {
       showNotification("Only Customers can purchase. Please login as a Customer.", "error");
       return;
     }
@@ -626,7 +715,7 @@ const ProductDetail: React.FC = () => {
             </span>
           </div>
           <img
-            src={selectedVariant?.imageUrl || currentProduct.variants[0].imageUrl}
+            src={selectedVariant?.imageUrl || currentProduct.imageUrl || currentProduct.variants[0]?.imageUrl}
             alt={selectedVariant?.name}
             className="max-h-[500px] w-auto object-contain drop-shadow-2xl transform transition-transform duration-500 hover:scale-105"
           />
@@ -805,9 +894,11 @@ const CheckoutView: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({
     recipientName: '',
-    phone: '',
-    addressLine: '',
-    city: ''
+    phoneNumber: '',
+    line1: '',
+    ward: '',
+    district: '',
+    province: ''
   });
 
   // Effect to select default or first address initially
@@ -821,13 +912,13 @@ const CheckoutView: React.FC = () => {
 
   const handleSaveAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.recipientName || !formData.phone || !formData.addressLine || !formData.city) {
+    if (!formData.recipientName || !formData.phoneNumber || !formData.line1 || !formData.ward || !formData.district || !formData.province) {
       showNotification("Please fill in all fields", "error");
       return;
     }
     addAddress(formData);
     setIsAdding(false);
-    setFormData({ recipientName: '', phone: '', addressLine: '', city: '' });
+    setFormData({ recipientName: '', phoneNumber: '', line1: '', ward: '', district: '', province: '' });
   };
 
   const handlePlaceOrder = () => {
@@ -873,27 +964,47 @@ const CheckoutView: React.FC = () => {
                     <input
                       type="text"
                       className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
-                      value={formData.phone}
-                      onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                      value={formData.phoneNumber}
+                      onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Address Line</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Street Address (Line 1)</label>
                     <input
                       type="text"
                       className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
-                      value={formData.addressLine}
-                      onChange={e => setFormData({ ...formData, addressLine: e.target.value })}
+                      value={formData.line1}
+                      onChange={e => setFormData({ ...formData, line1: e.target.value })}
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                    <input
-                      type="text"
-                      className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
-                      value={formData.city}
-                      onChange={e => setFormData({ ...formData, city: e.target.value })}
-                    />
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ward</label>
+                      <input
+                        type="text"
+                        className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                        value={formData.ward}
+                        onChange={e => setFormData({ ...formData, ward: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">District</label>
+                      <input
+                        type="text"
+                        className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                        value={formData.district}
+                        onChange={e => setFormData({ ...formData, district: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Province/City</label>
+                      <input
+                        type="text"
+                        className="block w-full border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+                        value={formData.province}
+                        onChange={e => setFormData({ ...formData, province: e.target.value })}
+                      />
+                    </div>
                   </div>
                   <div className="flex justify-end gap-3 pt-4">
                     <button
@@ -924,8 +1035,8 @@ const CheckoutView: React.FC = () => {
                       <div className="flex justify-between items-start">
                         <div>
                           <span className="block text-sm font-bold text-gray-900">{addr.recipientName}</span>
-                          <span className="block text-sm text-gray-600 mt-1">{addr.addressLine}, {addr.city}</span>
-                          <span className="block text-sm text-gray-500 mt-1">{addr.phone}</span>
+                          <span className="block text-sm text-gray-600 mt-1">{addr.line1}, {addr.ward}, {addr.district}, {addr.province}</span>
+                          <span className="block text-sm text-gray-500 mt-1">{addr.phoneNumber}</span>
                         </div>
                         {selectedAddress === addr.id && (
                           <CheckCircle className="h-5 w-5 text-indigo-600" />
@@ -1003,6 +1114,15 @@ const OrderHistory: React.FC = () => {
     }
   };
 
+  const formatAddress = (addr: any) => {
+    if (typeof addr === 'string') return addr;
+    if (typeof addr === 'object' && addr !== null) {
+      const { recipientName, phoneNumber, line1, ward, district, province } = addr;
+      return [recipientName, phoneNumber, line1, ward, district, province].filter(Boolean).join(', ');
+    }
+    return 'Unknown Address';
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <h1 className="text-3xl font-extrabold text-gray-900 mb-8">My Orders</h1>
@@ -1064,16 +1184,16 @@ const OrderHistory: React.FC = () => {
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Shipping</span>
-                        <span className="font-medium">$10</span>
+                        <span className="font-medium">$0</span>
                       </div>
                       <div className="flex justify-between text-base pt-3 border-t border-gray-200">
                         <span className="font-bold text-gray-900">Total</span>
-                        <span className="font-bold text-indigo-600">${order.totalAmount + 10}</span>
+                        <span className="font-bold text-indigo-600">${order.totalAmount}</span>
                       </div>
                     </div>
                     <div className="mt-6 pt-4 border-t border-gray-200">
                       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Shipping To</h4>
-                      <p className="text-sm text-gray-700">{order.shippingAddress}</p>
+                      <p className="text-sm text-gray-700">{formatAddress(order.shippingAddress)}</p>
                     </div>
                   </div>
                 </div>
@@ -1087,11 +1207,32 @@ const OrderHistory: React.FC = () => {
 };
 
 const StaffDashboard: React.FC = () => {
-  const { orders, products, currentUser, allUsers, updateOrderStatus, addStaffNote, updateInventory } = useAppContext();
-  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'overview'>('orders');
+  const { orders, products, currentUser, allUsers, updateOrderStatus, addStaffNote, editStaffNote, deleteStaffNote, updateInventory, updateUserRole, updateProduct, updateVariant } = useAppContext();
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'overview' | 'users'>('orders');
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editNoteContent, setEditNoteContent] = useState<string>('');
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editProductData, setEditProductData] = useState<{
+    name: string;
+    brand: string;
+    description: string;
+    imageUrl: string;
+    status: string;
+  }>({ name: '', brand: '', description: '', imageUrl: '', status: 'ACTIVE' });
 
-  const isAdmin = currentUser?.role === Role.ADMIN;
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  const [editVariantData, setEditVariantData] = useState<{
+    name: string;
+    color: string;
+    capacity: string;
+    price: number;
+    stockQuantity: number;
+    imageUrl: string;
+    status: string;
+  }>({ name: '', color: '', capacity: '', price: 0, stockQuantity: 0, imageUrl: '', status: 'IN_STOCK' });
+
+  const isAdmin = currentUser?.role.name === Role.ADMIN;
 
   // Set initial tab based on role
   useEffect(() => {
@@ -1111,14 +1252,52 @@ const StaffDashboard: React.FC = () => {
     }
   };
 
+  const handleEditProduct = (product: Product) => {
+    setEditingProductId(product.id);
+    setEditProductData({
+      name: product.name,
+      brand: product.brand,
+      description: product.description,
+      imageUrl: product.imageUrl || '',
+      status: (product as any).status || 'ACTIVE'
+    });
+  };
+
+  const handleSaveProduct = async () => {
+    if (editingProductId) {
+      await updateProduct(editingProductId, editProductData);
+      setEditingProductId(null);
+    }
+  };
+
+  const handleEditVariant = (variant: Variant) => {
+    setEditingVariantId(variant.id);
+    setEditVariantData({
+      name: variant.name,
+      color: variant.color,
+      capacity: variant.capacity,
+      price: variant.price,
+      stockQuantity: variant.stockQuantity,
+      imageUrl: variant.imageUrl || '',
+      status: (variant as any).status || 'IN_STOCK'
+    });
+  };
+
+  const handleSaveVariant = async () => {
+    if (editingVariantId) {
+      await updateVariant(editingVariantId, editVariantData);
+      setEditingVariantId(null);
+    }
+  };
+
   // --- Dashboard Statistics Calculation ---
   const stats = useMemo(() => {
     const totalRevenue = orders
       .filter(o => o.status === OrderStatus.COMPLETED || o.status === OrderStatus.CONFIRMED)
-      .reduce((sum, o) => sum + o.totalAmount + 10, 0); // Including shipping
+      .reduce((sum, o) => sum + o.totalAmount, 0); // Including shipping
 
     const activeOrders = orders.filter(o => o.status === OrderStatus.PENDING || o.status === OrderStatus.CONFIRMED).length;
-    const totalCustomers = allUsers.filter(u => u.role === Role.CUSTOMER).length;
+    const totalCustomers = allUsers.filter(u => u.role.name === Role.CUSTOMER).length;
 
     let lowStockCount = 0;
     products.forEach(p => {
@@ -1163,6 +1342,15 @@ const StaffDashboard: React.FC = () => {
               Inventory Management
             </button>
           )}
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+            >
+              User Management
+            </button>
+          )}
+
         </div>
       </div>
 
@@ -1211,10 +1399,95 @@ const StaffDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
-            <TrendingUp className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">Analytics Preview</h3>
-            <p className="text-gray-500 mt-2">More detailed charts and graphs would appear here in a production environment.</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+            {/* Revenue Trend */}
+            <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+              <h3 className="text-lg font-bold text-gray-900 mb-6">Revenue Trend (Daily)</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={
+                    Object.entries(orders.reduce((acc, order) => {
+                      const date = new Date(order.createdAt).toLocaleDateString();
+                      acc[date] = (acc[date] || 0) + Number(order.totalAmount);
+                      return acc;
+                    }, {} as Record<string, number>))
+                      .map(([date, revenue]) => ({ date, revenue }))
+                      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                  }>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} tickFormatter={(val) => `$${val}`} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                      formatter={(val: number) => [`$${val.toFixed(2)}`, 'Revenue']}
+                    />
+                    <Line type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={3} dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Order Status Distribution */}
+            <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+              <h3 className="text-lg font-bold text-gray-900 mb-6">Order Status Distribution</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RePieChart>
+                    <Pie
+                      data={
+                        Object.entries(orders.reduce((acc, order) => {
+                          acc[order.status] = (acc[order.status] || 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>))
+                          .map(([name, value]) => ({ name, value }))
+                      }
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {Object.keys(OrderStatus).map((key, index) => (
+                        <Cell key={`cell-${index}`} fill={[
+                          '#f59e0b', // PENDING
+                          '#3b82f6', // CONFIRMED
+                          '#10b981', // COMPLETED
+                          '#ef4444'  // CANCELLED
+                        ][index] || '#6366f1'} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', shadow: '0 4px 6px rgba(0,0,0,0.1)' }} />
+                    <Legend verticalAlign="bottom" height={36} />
+                  </RePieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Top Products */}
+            <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200 lg:col-span-2">
+              <h3 className="text-lg font-bold text-gray-900 mb-6">Top Selling Products (by Quantity)</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ReBarChart data={
+                    Object.entries(orders.flatMap(o => o.items).reduce((acc, item) => {
+                      const productName = item.productName || 'Unknown Product';
+                      acc[productName] = (acc[productName] || 0) + (item.quantity || 1);
+                      return acc;
+                    }, {} as Record<string, number>))
+                      .map(([name, quantity]) => ({ name, quantity }))
+                      .sort((a, b) => b.quantity - a.quantity)
+                      .slice(0, 5)
+                  } layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
+                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#4b5563', fontWeight: 'bold' }} width={120} />
+                    <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ borderRadius: '12px', border: 'none', shadow: '0 4px 6px rgba(0,0,0,0.1)' }} />
+                    <Bar dataKey="quantity" fill="#818cf8" radius={[0, 4, 4, 0]} barSize={20} />
+                  </ReBarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1239,7 +1512,7 @@ const StaffDashboard: React.FC = () => {
                     <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
                     <p className="text-xs text-gray-400">{new Date(order.createdAt).toLocaleString()}</p>
                     <div className="mt-2 text-sm text-gray-600">
-                      {order.items.length} items | Total: <span className="font-bold">${order.totalAmount + 10}</span>
+                      {order.items.length} items | Total: <span className="font-bold">${order.totalAmount}</span>
                     </div>
                   </div>
 
@@ -1277,8 +1550,60 @@ const StaffDashboard: React.FC = () => {
                   <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
                     {order.notes.length === 0 && <p className="text-xs text-gray-400 italic">No notes yet.</p>}
                     {order.notes.map(note => (
-                      <div key={note.id} className="text-xs bg-white p-2 rounded border border-gray-100">
-                        <span className="font-bold text-gray-700">{note.authorName}:</span> {note.content}
+                      <div key={note.id} className="text-xs bg-white p-2 rounded border border-gray-100 group relative">
+                        {editingNoteId === note.id ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              className="flex-1 border border-gray-300 rounded text-xs p-1"
+                              value={editNoteContent}
+                              onChange={(e) => setEditNoteContent(e.target.value)}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => {
+                                editStaffNote(note.id, editNoteContent);
+                                setEditingNoteId(null);
+                              }}
+                              className="text-indigo-600 font-bold"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingNoteId(null)}
+                              className="text-gray-400"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="pr-12">
+                              <span className="font-bold text-gray-700">{note.authorName}:</span> {note.content}
+                            </div>
+                            <div className="absolute right-1 top-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => {
+                                  setEditingNoteId(note.id);
+                                  setEditNoteContent(note.content);
+                                }}
+                                className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                              >
+                                <Edit2 className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm('Delete this note?')) {
+                                    deleteStaffNote(note.id);
+                                  }
+                                }}
+                                className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1306,35 +1631,74 @@ const StaffDashboard: React.FC = () => {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Product</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Image</th>
                   <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Variant</th>
                   <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Stock Level</th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Adjust</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {products.flatMap(p => p.variants.map(v => ({ ...v, productName: p.name }))).map((variant) => (
                   <tr key={variant.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{variant.productName}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{variant.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-3">
+                        <span className="text-sm font-medium text-gray-900">{variant.productName}</span>
+                        <button
+                          onClick={() => {
+                            const p = products.find(prod => prod.id === variant.productId);
+                            if (p) handleEditProduct(p);
+                          }}
+                          className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                          title="Edit Product Details"
+                        >
+                          <Edit2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="h-10 w-10 rounded border border-gray-100 overflow-hidden bg-gray-50">
+                        <img
+                          src={variant.imageUrl || products.find(p => p.id === variant.productId)?.imageUrl}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/40?text=No+Img')}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <div className="flex items-center space-x-1">
+                        <span className="truncate max-w-[150px]">{variant.name}</span>
+                        <button
+                          onClick={() => handleEditVariant(variant as any)}
+                          className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                          title="Edit Variant Details"
+                        >
+                          <Edit2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${variant.stockQuantity < 5 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
                         {variant.stockQuantity} Units
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => updateInventory(variant.id, Math.max(0, variant.stockQuantity - 1))}
-                          className="p-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
-                        >
-                          <Minus className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => updateInventory(variant.id, variant.stockQuantity + 5)}
-                          className="p-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
+                      <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-1 border rounded-lg bg-gray-50 p-1">
+                          <button
+                            onClick={() => updateInventory(variant.id, Math.max(0, variant.stockQuantity - 1))}
+                            className="p-1 rounded hover:bg-white hover:shadow-sm text-gray-600 transition-all"
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="px-2 text-xs font-bold text-gray-700 min-w-[20px] text-center">{variant.stockQuantity}</span>
+                          <button
+                            onClick={() => updateInventory(variant.id, variant.stockQuantity + 5)}
+                            className="p-1 rounded hover:bg-white hover:shadow-sm text-indigo-600 transition-all"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -1344,6 +1708,298 @@ const StaffDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {activeTab === 'users' && isAdmin && (
+        <div className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200 animate-slide-in-right">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">User</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Current Role</th>
+                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Action</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {allUsers.map((user) => (
+                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs mr-3">
+                          {user.fullName.charAt(0)}
+                        </div>
+                        <span className="text-sm font-medium text-gray-900">{user.fullName}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide
+                        ${user.role.name === Role.ADMIN ? 'bg-purple-100 text-purple-800' :
+                          user.role.name === Role.STAFF ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>
+                        {user.role.name}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {user.id !== currentUser?.id ? (
+                        <div className="flex items-center space-x-2">
+                          <select
+                            className="bg-gray-50 border border-gray-300 text-gray-900 text-xs rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2"
+                            value={user.role.name}
+                            onChange={async (e) => {
+                              const newRole = e.target.value as Role;
+                              await updateUserRole(user.id, newRole);
+                            }}
+                          >
+                            <option value={Role.CUSTOMER}>Customer</option>
+                            <option value={Role.STAFF}>Staff</option>
+                            <option value={Role.ADMIN}>Admin</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400 italic">(Self)</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Product Modal */}
+      {editingProductId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 animate-scale-up">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h3 className="text-xl font-bold text-gray-900">Edit Product Information</h3>
+              <button
+                onClick={() => setEditingProductId(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+              {/* Image Preview */}
+              <div className="flex justify-center mb-6">
+                <div className="relative group">
+                  <div className="h-40 w-40 rounded-2xl border-2 border-dashed border-gray-200 overflow-hidden bg-gray-50 flex items-center justify-center transition-all group-hover:border-indigo-300">
+                    {editProductData.imageUrl ? (
+                      <img src={editProductData.imageUrl} alt="Preview" className="h-full w-full object-contain" />
+                    ) : (
+                      <div className="text-center p-4">
+                        <Package className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+                        <span className="text-xs text-gray-400 font-medium">No Image URL</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Product Name</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editProductData.name}
+                    onChange={(e) => setEditProductData(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Brand</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editProductData.brand}
+                    onChange={(e) => setEditProductData(prev => ({ ...prev, brand: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Image URL</label>
+                <input
+                  type="text"
+                  placeholder="https://example.com/image.jpg"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono text-sm"
+                  value={editProductData.imageUrl}
+                  onChange={(e) => setEditProductData(prev => ({ ...prev, imageUrl: e.target.value }))}
+                />
+                <p className="mt-1 text-[10px] text-gray-400 italic">This will set the primary image for all variants of this product.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Description</label>
+                <textarea
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all h-32 resize-none"
+                  value={editProductData.description}
+                  onChange={(e) => setEditProductData(prev => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Status</label>
+                <select
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                  value={editProductData.status}
+                  onChange={(e) => setEditProductData(prev => ({ ...prev, status: e.target.value }))}
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                  <option value="ARCHIVED">Archived</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3 justify-end bg-gray-50/50">
+              <button
+                onClick={() => setEditingProductId(null)}
+                className="px-6 py-2 bg-white border border-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveProduct}
+                className="px-8 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Variant Modal */}
+      {editingVariantId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 animate-scale-up">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h3 className="text-xl font-bold text-gray-900">Edit Variant Details</h3>
+              <button
+                onClick={() => setEditingVariantId(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+              {/* Image Preview */}
+              <div className="flex justify-center mb-6">
+                <div className="relative group">
+                  <div className="h-40 w-40 rounded-2xl border-2 border-dashed border-gray-200 overflow-hidden bg-gray-50 flex items-center justify-center transition-all group-hover:border-indigo-300">
+                    {editVariantData.imageUrl ? (
+                      <img src={editVariantData.imageUrl} alt="Preview" className="h-full w-full object-contain" />
+                    ) : (
+                      <div className="text-center p-4">
+                        <Image className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+                        <span className="text-xs text-gray-400 font-medium">No Variant Image</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Variant Name</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.name}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Price ($)</label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.price}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, price: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Color</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.color}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, color: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Capacity</label>
+                  <input
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.capacity}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, capacity: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Variant Image URL</label>
+                <input
+                  type="text"
+                  placeholder="https://example.com/variant-image.jpg"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono text-sm"
+                  value={editVariantData.imageUrl}
+                  onChange={(e) => setEditVariantData(prev => ({ ...prev, imageUrl: e.target.value }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Stock Quantity</label>
+                  <input
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.stockQuantity}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, stockQuantity: Number(e.target.value) }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Status</label>
+                  <select
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={editVariantData.status}
+                    onChange={(e) => setEditVariantData(prev => ({ ...prev, status: e.target.value }))}
+                  >
+                    <option value="IN_STOCK">In Stock</option>
+                    <option value="OUT_OF_STOCK">Out of Stock</option>
+                    <option value="DISCONTINUED">Discontinued</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3 justify-end bg-gray-50/50">
+              <button
+                onClick={() => setEditingVariantId(null)}
+                className="px-6 py-2 bg-white border border-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveVariant}
+                className="px-8 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
@@ -1354,7 +2010,7 @@ const RegisterView: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<Role>(Role.CUSTOMER);
+  // const [role, setRole] = useState<Role>(Role.CUSTOMER); // Removed role selection for users
   const [error, setError] = useState('');
 
   const handleRegister = (e: React.FormEvent) => {
@@ -1368,7 +2024,7 @@ const RegisterView: React.FC = () => {
       return;
     }
     setError('');
-    register(fullName, email, password, role);
+    register(fullName, email, password);
   };
 
   return (
@@ -1464,26 +2120,7 @@ const RegisterView: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">Role</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Settings className="h-5 w-5 text-gray-400" />
-                </div>
-                <select
-                  className="appearance-none block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent sm:text-sm bg-white transition-all"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as Role)}
-                >
-                  <option value={Role.CUSTOMER}>Customer</option>
-                  <option value={Role.STAFF}>Staff</option>
-                  <option value={Role.ADMIN}>Admin</option>
-                </select>
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <ChevronDown className="h-4 w-4 text-gray-400" />
-                </div>
-              </div>
-            </div>
+            {/* Role selection removed - all new users are CUSTOMER */}
           </div>
 
           <button
@@ -1596,52 +2233,6 @@ const LoginView: React.FC = () => {
           </button>
         </form>
 
-        <div className="relative my-8">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200" />
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-4 bg-white text-gray-400 font-medium">
-              Or continue with demo
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3">
-          <button
-            onClick={() => login('customer@demo.com', Role.CUSTOMER)}
-            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
-          >
-            <div className="flex items-center">
-              <div className="h-2 w-2 bg-blue-500 rounded-full mr-3"></div>
-              Customer Account
-            </div>
-            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
-          </button>
-
-          <button
-            onClick={() => login('staff@demo.com', Role.STAFF)}
-            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
-          >
-            <div className="flex items-center">
-              <div className="h-2 w-2 bg-purple-500 rounded-full mr-3"></div>
-              Staff Account
-            </div>
-            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
-          </button>
-
-          <button
-            onClick={() => login('admin@demo.com', Role.ADMIN)}
-            className="w-full flex justify-between items-center px-4 py-3 border border-gray-200 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-300 transition-all group"
-          >
-            <div className="flex items-center">
-              <div className="h-2 w-2 bg-gray-800 rounded-full mr-3"></div>
-              Admin Account
-            </div>
-            <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
-          </button>
-        </div>
-
         <div className="text-center mt-6">
           <p className="text-sm text-gray-600">
             Don't have an account?{' '}
@@ -1702,6 +2293,7 @@ const MainContent: React.FC = () => {
         {view === 'checkout' && <CheckoutView />}
         {view === 'orders' && <OrderHistory />}
         {view === 'dashboard' && <StaffDashboard />}
+        {view === 'admin-dashboard' && <StaffDashboard />}
         {view === 'login' && <LoginView />}
         {view === 'register' && <RegisterView />}
       </main>

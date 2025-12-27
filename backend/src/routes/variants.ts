@@ -25,7 +25,7 @@ router.put('/:id', async (req, res) => {
         const { name, color, capacity, price, stockQuantity, imageUrl } = req.body;
         const variant = await prisma.variant.update({
             where: { id: req.params.id },
-            data: { name, color, capacity, price, stockQuantity, imageUrl },
+            data: { name, color, capacity, price, stockQuantity, imageUrl, status: req.body.status },
             include: { product: true },
         });
         res.json(variant);
@@ -51,7 +51,7 @@ router.get('/:variantId/inventory', async (req, res) => {
     try {
         const transactions = await prisma.inventoryTx.findMany({
             where: { variantId: req.params.variantId },
-            orderBy: { date: 'desc' },
+            orderBy: { createdAt: 'desc' }, // date -> createdAt
         });
         res.json(transactions);
     } catch (error: any) {

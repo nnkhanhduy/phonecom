@@ -6,7 +6,8 @@ const router = Router();
 // Create address for user
 router.post('/', async (req, res) => {
     try {
-        const { userId, recipientName, phone, addressLine, city, isDefault } = req.body;
+        const { userId, recipientName, phoneNumber, line1, ward, district, province, isDefault } = req.body;
+        console.log('Received address create body:', req.body);
 
         // If setting as default, unset other defaults for this user
         if (isDefault) {
@@ -20,9 +21,11 @@ router.post('/', async (req, res) => {
             data: {
                 userId,
                 recipientName,
-                phone,
-                addressLine,
-                city,
+                phoneNumber,
+                line1,
+                ward,
+                district,
+                province,
                 isDefault: isDefault || false,
             },
         });
@@ -50,7 +53,7 @@ router.get('/:id', async (req, res) => {
 // Update address
 router.put('/:id', async (req, res) => {
     try {
-        const { recipientName, phone, addressLine, city, isDefault } = req.body;
+        const { recipientName, phoneNumber, line1, ward, district, province, isDefault } = req.body;
 
         const address = await prisma.address.findUnique({
             where: { id: req.params.id },
@@ -70,7 +73,7 @@ router.put('/:id', async (req, res) => {
 
         const updatedAddress = await prisma.address.update({
             where: { id: req.params.id },
-            data: { recipientName, phone, addressLine, city, isDefault },
+            data: { recipientName, phoneNumber, line1, ward, district, province, isDefault },
         });
         res.json(updatedAddress);
     } catch (error: any) {

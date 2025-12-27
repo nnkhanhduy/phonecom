@@ -17,7 +17,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const api = {
     // --- USERS ---
     users: {
-        create: (data: Partial<User>) =>
+        create: (data: any) =>
             fetch(`${API_URL}/users`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -38,6 +38,13 @@ export const api = {
 
         getAddresses: (userId: string) =>
             fetch(`${API_URL}/users/${userId}/addresses`).then(res => handleResponse<Address[]>(res)),
+
+        update: (id: string, data: any) =>
+            fetch(`${API_URL}/users/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            }).then(res => handleResponse<User>(res)),
     },
 
     // --- PRODUCTS & VARIANTS ---
@@ -47,14 +54,28 @@ export const api = {
 
         getById: (id: string) =>
             fetch(`${API_URL}/products/${id}`).then(res => handleResponse<Product>(res)),
+
+        create: (data: any) =>
+            fetch(`${API_URL}/products`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            }).then(res => handleResponse<Product>(res)),
+
+        update: (id: string, data: any) =>
+            fetch(`${API_URL}/products/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            }).then(res => handleResponse<Product>(res)),
     },
 
     variants: {
-        updateInventory: (id: string, newStock: number) =>
+        update: (id: string, data: any) =>
             fetch(`${API_URL}/variants/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stockQuantity: newStock }),
+                body: JSON.stringify(data),
             }).then(res => handleResponse<Variant>(res)),
     },
 
@@ -125,6 +146,18 @@ export const api = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ orderId, authorId, content }),
             }).then(res => handleResponse<any>(res)),
+
+        update: (id: string, content: string) =>
+            fetch(`${API_URL}/staff-notes/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content }),
+            }).then(res => handleResponse<any>(res)),
+
+        delete: (id: string) =>
+            fetch(`${API_URL}/staff-notes/${id}`, {
+                method: 'DELETE',
+            }).then(res => handleResponse<void>(res)),
     },
 
     // --- INVENTORY ---

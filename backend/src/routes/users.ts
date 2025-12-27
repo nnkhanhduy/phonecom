@@ -6,10 +6,25 @@ const router = Router();
 // Create user
 router.post('/', async (req, res) => {
     try {
-        const { fullName, email, role } = req.body;
+        const { fullName, email } = req.body;
+
+        // All new registrations default to CUSTOMER
+        const roleName = 'CUSTOMER';
+        const roleRecord = await prisma.role.findFirst({
+            where: { name: roleName }
+        });
+
+        if (!roleRecord) {
+            return res.status(400).json({ error: `Role '${roleName}' not found` });
+        }
+
         const user = await prisma.user.create({
-            data: { fullName, email, role },
-            include: { addresses: true },
+            data: {
+                fullName,
+                email,
+                roleId: roleRecord.id
+            },
+            include: { addresses: true, role: true },
         });
         res.status(201).json(user);
     } catch (error: any) {
@@ -22,7 +37,7 @@ router.get('/:id', async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: req.params.id },
-            include: { addresses: true },
+            include: { addresses: true, role: true },
         });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -37,7 +52,7 @@ router.get('/:id', async (req, res) => {
 router.get('/', async (req, res) => {
     try {
         const users = await prisma.user.findMany({
-            include: { addresses: true },
+            include: { addresses: true, role: true },
         });
         res.json(users);
     } catch (error: any) {
@@ -49,10 +64,23 @@ router.get('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { fullName, email, role } = req.body;
+
+        let updateData: any = { fullName, email };
+
+        if (role) {
+            const roleRecord = await prisma.role.findFirst({
+                where: { name: role }
+            });
+            if (!roleRecord) {
+                return res.status(400).json({ error: `Role '${role}' not found` });
+            }
+            updateData.roleId = roleRecord.id;
+        }
+
         const user = await prisma.user.update({
             where: { id: req.params.id },
-            data: { fullName, email, role },
-            include: { addresses: true },
+            data: updateData,
+            include: { addresses: true, role: true },
         });
         res.json(user);
     } catch (error: any) {
@@ -75,16 +103,27 @@ router.delete('/:id', async (req, res) => {
 // Get user's cart
 router.get('/:userId/cart', async (req, res) => {
     try {
-        const cartItems = await prisma.cartItem.findMany({
+        // Find the user's cart first
+        const cart = await prisma.cart.findUnique({
             where: { userId: req.params.userId },
             include: {
-                variant: {
+                cartItems: {
                     include: {
-                        product: true,
-                    },
-                },
-            },
+                        variant: {
+                            include: {
+                                product: true
+                            }
+                        }
+                    }
+                }
+            }
         });
+
+        if (!cart) {
+            return res.json([]); // Return empty if no cart yet
+        }
+
+        const cartItems = cart.cartItems;
 
         // Transform to match CartItem interface from types.ts
         const formattedCart = cartItems.map(item => ({
@@ -93,7 +132,7 @@ router.get('/:userId/cart', async (req, res) => {
             productName: item.variant.product.name,
             variantName: item.variant.name,
             price: item.variant.price,
-            quantity: item.quantity,
+            quantity: item.qty, // Changed from quantity to qty
             imageUrl: item.variant.imageUrl,
         }));
 
@@ -109,7 +148,13 @@ router.get('/:userId/orders', async (req, res) => {
         const orders = await prisma.order.findMany({
             where: { userId: req.params.userId },
             include: {
-                items: true,
+                items: {
+                    include: {
+                        variant: {
+                            include: { product: true }
+                        }
+                    }
+                },
                 staffNotes: {
                     include: {
                         author: {
@@ -129,8 +174,15 @@ router.get('/:userId/orders', async (req, res) => {
             id: order.id,
             userId: order.userId,
             customerName: order.user.fullName,
-            items: order.items,
-            totalAmount: order.totalAmount,
+            items: order.items.map(item => ({
+                id: item.id,
+                variantId: item.variantId,
+                productName: item.variant.product.name,
+                variantName: item.variantNameSnapshot,
+                price: Number(item.unitPrice),
+                quantity: item.quantity,
+            })),
+            totalAmount: Number(order.totalAmount),
             status: order.status,
             shippingAddress: order.shippingAddress,
             createdAt: order.createdAt.toISOString(),

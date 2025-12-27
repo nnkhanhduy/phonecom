@@ -4,8 +4,6 @@ Backend server cho hệ thống E-commerce PhoneCom sử dụng PostgreSQL, Pris
 
 ## Cấu trúc Database
 
-Backend này triển khai 11 bảng dữ liệu theo cấu trúc từ `types.ts`:
-
 1. **users** - Thông tin người dùng với vai trò (GUEST, CUSTOMER, STAFF, ADMIN)
 2. **addresses** - Địa chỉ giao hàng của người dùng
 3. **products** - Thông tin sản phẩm (tên, thương hiệu, mô tả)

@@ -18,7 +18,7 @@ export interface User {
   id: string;
   fullName: string;
   email: string;
-  role: Role;
+  role: { name: string };
   addresses: Address[];
 }
 
@@ -26,9 +26,11 @@ export interface Address {
   id: string;
   userId: string;
   recipientName: string;
-  phone: string;
-  addressLine: string;
-  city: string;
+  phoneNumber: string;
+  line1: string;
+  ward: string;
+  district: string;
+  province: string;
   isDefault: boolean;
 }
 
@@ -48,6 +50,7 @@ export interface Product {
   name: string;
   brand: string;
   description: string;
+  imageUrl?: string;
   variants: Variant[];
 }
 

@@ -8,23 +8,31 @@ router.post('/', async (req, res) => {
     try {
         const { userId, shippingAddress } = req.body;
 
-        // Get cart items
-        const cartItems = await prisma.cartItem.findMany({
+        // Get cart items via Cart model
+        // Logic changed: Find Cart -> CartItems
+        // But user provided userId.
+        const cart = await prisma.cart.findUnique({
             where: { userId },
             include: {
-                variant: {
-                    include: { product: true },
+                cartItems: {
+                    include: {
+                        variant: {
+                            include: { product: true },
+                        },
+                    },
                 },
             },
         });
 
-        if (cartItems.length === 0) {
+        if (!cart || cart.cartItems.length === 0) {
             return res.status(400).json({ error: 'Cart is empty' });
         }
 
+        const cartItems = cart.cartItems;
+
         // Check stock availability
         for (const item of cartItems) {
-            if (item.variant.stockQuantity < item.quantity) {
+            if (item.variant.stockQuantity < item.qty) {
                 return res.status(400).json({
                     error: `Insufficient stock for ${item.variant.product.name} - ${item.variant.name}`
                 });
@@ -33,7 +41,7 @@ router.post('/', async (req, res) => {
 
         // Calculate total
         const totalAmount = cartItems.reduce(
-            (sum, item) => sum + item.variant.price * item.quantity,
+            (sum, item) => sum + Number(item.variant.price) * item.qty,
             0
         );
 
@@ -44,29 +52,44 @@ router.post('/', async (req, res) => {
                 data: {
                     userId,
                     totalAmount,
+                    subtotal: totalAmount, // For now assuming no tax/fee diff or calc logic
+                    shippingFee: 0,
+                    paymentMethod: 'COD', // Default or from body
                     status: 'PENDING',
-                    shippingAddress,
+                    shippingAddress: shippingAddress,
                     items: {
                         create: cartItems.map(item => ({
                             variantId: item.variantId,
-                            productName: item.variant.product.name,
-                            variantName: item.variant.name,
-                            price: item.variant.price,
-                            quantity: item.quantity,
+                            variantNameSnapshot: item.variant.name,
+                            unitPrice: item.variant.price,
+                            lineTotal: Number(item.variant.price) * item.qty,
+                            quantity: item.qty,
                         })),
                     },
+                    // We might want to link createdBy/confirmedBy etc here if we had user info
                 },
                 include: {
-                    items: true,
+                    items: {
+                        include: {
+                            variant: {
+                                include: { product: true }
+                            }
+                        }
+                    },
                     user: {
                         select: { fullName: true },
                     },
                 },
             });
 
-            // Clear cart
+            // Clear cart items
             await tx.cartItem.deleteMany({
-                where: { userId },
+                where: { cartId: cart.id },
+            });
+            // Update cart totals
+            await tx.cart.update({
+                where: { id: cart.id },
+                data: { totalItems: 0, totalAmount: 0 }
             });
 
             return newOrder;
@@ -76,8 +99,15 @@ router.post('/', async (req, res) => {
             id: order.id,
             userId: order.userId,
             customerName: order.user.fullName,
-            items: order.items,
-            totalAmount: order.totalAmount,
+            items: order.items.map(item => ({
+                id: item.id,
+                variantId: item.variantId,
+                productName: item.variant.product.name,
+                variantName: item.variantNameSnapshot,
+                price: Number(item.unitPrice),
+                quantity: item.quantity,
+            })),
+            totalAmount: Number(order.totalAmount),
             status: order.status,
             shippingAddress: order.shippingAddress,
             createdAt: order.createdAt.toISOString(),
@@ -93,9 +123,15 @@ router.get('/', async (req, res) => {
     try {
         const { status } = req.query;
         const orders = await prisma.order.findMany({
-            where: status ? { status: status as any } : undefined,
+            where: status ? { status: status as string } : undefined,
             include: {
-                items: true,
+                items: {
+                    include: {
+                        variant: {
+                            include: { product: true }
+                        }
+                    }
+                },
                 staffNotes: {
                     include: {
                         author: {
@@ -114,8 +150,15 @@ router.get('/', async (req, res) => {
             id: order.id,
             userId: order.userId,
             customerName: order.user.fullName,
-            items: order.items,
-            totalAmount: order.totalAmount,
+            items: order.items.map(item => ({
+                id: item.id,
+                variantId: item.variantId,
+                productName: item.variant.product.name,
+                variantName: item.variantNameSnapshot,
+                price: Number(item.unitPrice),
+                quantity: item.quantity,
+            })),
+            totalAmount: Number(order.totalAmount),
             status: order.status,
             shippingAddress: order.shippingAddress,
             createdAt: order.createdAt.toISOString(),
@@ -139,7 +182,13 @@ router.get('/:id', async (req, res) => {
         const order = await prisma.order.findUnique({
             where: { id: req.params.id },
             include: {
-                items: true,
+                items: {
+                    include: {
+                        variant: {
+                            include: { product: true }
+                        }
+                    }
+                },
                 staffNotes: {
                     include: {
                         author: {
@@ -161,8 +210,15 @@ router.get('/:id', async (req, res) => {
             id: order.id,
             userId: order.userId,
             customerName: order.user.fullName,
-            items: order.items,
-            totalAmount: order.totalAmount,
+            items: order.items.map(item => ({
+                id: item.id,
+                variantId: item.variantId,
+                productName: item.variant.product.name,
+                variantName: item.variantNameSnapshot,
+                price: Number(item.unitPrice),
+                quantity: item.quantity,
+            })),
+            totalAmount: Number(order.totalAmount),
             status: order.status,
             shippingAddress: order.shippingAddress,
             createdAt: order.createdAt.toISOString(),
@@ -185,7 +241,7 @@ router.put('/:id/status', async (req, res) => {
 
         const order = await prisma.order.findUnique({
             where: { id: req.params.id },
-            include: { items: true },
+            include: { items: { include: { variant: true } } }, // Need variant for stock updates
         });
 
         if (!order) {
@@ -209,9 +265,10 @@ router.put('/:id/status', async (req, res) => {
                     await tx.inventoryTx.create({
                         data: {
                             variantId: item.variantId,
-                            qtyChange: -item.quantity,
+                            quantity: -item.quantity,
+                            type: 'EXPORT',
                             reason: `Order confirmed: ${order.id}`,
-                            date: new Date(),
+                            createdBy: order.userId,
                         },
                     });
                 }
@@ -219,7 +276,7 @@ router.put('/:id/status', async (req, res) => {
                 // Update order status
                 await tx.order.update({
                     where: { id: req.params.id },
-                    data: { status },
+                    data: { status, confirmedBy: order.userId, confirmedAt: new Date() }, // Assuming self-confirmation or pass admin ID
                 });
             });
         } else if (status === 'CANCELLED' && order.status !== 'CANCELLED') {
@@ -239,9 +296,10 @@ router.put('/:id/status', async (req, res) => {
                         await tx.inventoryTx.create({
                             data: {
                                 variantId: item.variantId,
-                                qtyChange: item.quantity,
+                                quantity: item.quantity,
+                                type: 'IMPORT', // or ADJUSTMENT
                                 reason: `Order cancelled: ${order.id}`,
-                                date: new Date(),
+                                createdBy: order.userId,
                             },
                         });
                     }
@@ -249,28 +307,40 @@ router.put('/:id/status', async (req, res) => {
                     // Update order status
                     await tx.order.update({
                         where: { id: req.params.id },
-                        data: { status },
+                        data: { status, cancelledBy: order.userId, cancelledAt: new Date() },
                     });
                 });
             } else {
                 // Just update status if not confirmed yet
                 await prisma.order.update({
                     where: { id: req.params.id },
-                    data: { status },
+                    data: { status, cancelledBy: order.userId, cancelledAt: new Date() },
                 });
             }
         } else {
             // Simple status update (e.g., CONFIRMED -> COMPLETED)
+            const updateData: any = { status };
+            if (status === 'COMPLETED') {
+                updateData.completedBy = order.userId;
+                updateData.completedAt = new Date();
+            }
+
             await prisma.order.update({
                 where: { id: req.params.id },
-                data: { status },
+                data: updateData,
             });
         }
 
         const updatedOrder = await prisma.order.findUnique({
             where: { id: req.params.id },
             include: {
-                items: true,
+                items: {
+                    include: {
+                        variant: {
+                            include: { product: true }
+                        }
+                    }
+                },
                 staffNotes: {
                     include: {
                         author: {
@@ -288,8 +358,15 @@ router.put('/:id/status', async (req, res) => {
             id: updatedOrder!.id,
             userId: updatedOrder!.userId,
             customerName: updatedOrder!.user.fullName,
-            items: updatedOrder!.items,
-            totalAmount: updatedOrder!.totalAmount,
+            items: updatedOrder!.items.map(item => ({
+                id: item.id,
+                variantId: item.variantId,
+                productName: item.variant.product.name,
+                variantName: item.variantNameSnapshot,
+                price: Number(item.unitPrice),
+                quantity: item.quantity,
+            })),
+            totalAmount: Number(updatedOrder!.totalAmount),
             status: updatedOrder!.status,
             shippingAddress: updatedOrder!.shippingAddress,
             createdAt: updatedOrder!.createdAt.toISOString(),

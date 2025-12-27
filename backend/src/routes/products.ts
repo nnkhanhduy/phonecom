@@ -6,12 +6,14 @@ const router = Router();
 // Create product with variants
 router.post('/', async (req, res) => {
     try {
-        const { name, brand, description, variants } = req.body;
+        const { name, brand, description, imageUrl, variants } = req.body;
         const product = await prisma.product.create({
             data: {
                 name,
                 brand,
                 description,
+                imageUrl,
+                status: 'ACTIVE', // Default
                 variants: variants ? {
                     create: variants,
                 } : undefined,
@@ -56,10 +58,10 @@ router.get('/:id', async (req, res) => {
 // Update product
 router.put('/:id', async (req, res) => {
     try {
-        const { name, brand, description } = req.body;
+        const { name, brand, description, imageUrl, status } = req.body;
         const product = await prisma.product.update({
             where: { id: req.params.id },
-            data: { name, brand, description },
+            data: { name, brand, description, imageUrl, status },
             include: { variants: true },
         });
         res.json(product);
@@ -92,6 +94,7 @@ router.post('/:productId/variants', async (req, res) => {
                 capacity,
                 price,
                 stockQuantity: stockQuantity || 0,
+                status: 'IN_STOCK',
                 imageUrl,
             },
         });

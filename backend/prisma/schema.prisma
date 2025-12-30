@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,54 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --------------------------------------
-// User & Role
-// --------------------------------------
-
 model Role {
   id          String   @id @default(uuid()) @map("roleId")
-  name        String // "ADMIN", "STAFF", "CUSTOMER", "GUEST"
+  name        String
   description String?
-  permissions String[] // Stored as array of strings
-
-  users User[]
+  permissions String[]
+  users       User[]
 
   @@map("roles")
 }
 
 model User {
-  id           String   @id @default(uuid()) @map("userId")
-  roleId       String
-  fullName     String
-  email        String   @unique
-  passwordHash String?
-  status       String   @default("ACTIVE")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  role      Role      @relation(fields: [roleId], references: [id])
-  addresses Address[]
-  orders    Order[]   @relation("UserOrders") // Orders placed by this user
-  cart      Cart? // One-to-one (optional)
-
-  // Relations for "written by"
-  staffNotes StaffNote[] @relation("NoteAuthor")
-
-  // Audit relations (created by/confirmed by etc)
-  ordersCreated   Order[] @relation("OrderCreator")
-  ordersConfirmed Order[] @relation("OrderConfirmer")
-  ordersCompleted Order[] @relation("OrderCompleter")
-  ordersCancelled Order[] @relation("OrderCanceller")
-
+  id                 String        @id @default(uuid()) @map("userId")
+  roleId             String
+  fullName           String
+  email              String        @unique
+  passwordHash       String?
+  status             String        @default("ACTIVE")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  addresses          Address[]
+  cart               Cart?
   inventoryTxCreated InventoryTx[] @relation("TxCreator")
+  ordersCancelled    Order[]       @relation("OrderCanceller")
+  ordersCompleted    Order[]       @relation("OrderCompleter")
+  ordersConfirmed    Order[]       @relation("OrderConfirmer")
+  ordersCreated      Order[]       @relation("OrderCreator")
+  orders             Order[]       @relation("UserOrders")
+  staffNotes         StaffNote[]   @relation("NoteAuthor")
+  role               Role          @relation(fields: [roleId], references: [id])
 
   @@map("users")
 }
-
-// --------------------------------------
-// Address
-// --------------------------------------
 
 model Address {
   id            String   @id @default(uuid()) @map("addressId")
@@ -70,70 +51,54 @@ model Address {
   phoneNumber   String
   isDefault     Boolean  @default(false)
   createdAt     DateTime @default(now())
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("addresses")
 }
 
-// --------------------------------------
-// Product & Variant
-// --------------------------------------
-
 model Product {
-  id          String   @id @default(uuid()) @map("productId")
+  id          String    @id @default(uuid()) @map("productId")
   name        String
   brand       String
-  description String?  @db.Text
+  description String?
   status      String
   imageUrl    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  variants Variant[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  variants    Variant[]
 
   @@map("products")
 }
 
 model Variant {
-  id            String   @id @default(uuid()) @map("variantId")
+  id            String        @id @default(uuid()) @map("variantId")
   productId     String
   name          String
   color         String
   capacity      String
-  price         Decimal  @db.Decimal(10, 2)
-  stockQuantity Int      @default(0)
+  price         Decimal       @db.Decimal(10, 2)
+  stockQuantity Int           @default(0)
   status        String
   imageUrl      String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Relations
-  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  cartItems    CartItem[]
-  orderItems   OrderItem[]
-  inventoryTxs InventoryTx[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  cartItems     CartItem[]
+  inventoryTxs  InventoryTx[]
+  orderItems    OrderItem[]
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("variants")
 }
 
-// --------------------------------------
-// Cart
-// --------------------------------------
-
 model Cart {
-  id          String   @id @default(uuid()) @map("cartId")
-  userId      String?  @unique
-  totalItems  Int      @default(0)
-  totalAmount Decimal  @default(0) @db.Decimal(10, 2)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  user      User?      @relation(fields: [userId], references: [id])
-  cartItems CartItem[]
+  id          String     @id @default(uuid()) @map("cartId")
+  userId      String?    @unique
+  totalItems  Int        @default(0)
+  totalAmount Decimal    @default(0) @db.Decimal(10, 2)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  cartItems   CartItem[]
+  user        User?      @relation(fields: [userId], references: [id])
 
   @@map("carts")
 }
@@ -145,51 +110,37 @@ model CartItem {
   qty        Int     @default(1)
   unitPrice  Decimal @db.Decimal(10, 2)
   lineAmount Decimal @db.Decimal(10, 2)
-
-  // Relations
-  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  cart       Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant    Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@map("cart_items")
 }
 
-// --------------------------------------
-// Order
-// --------------------------------------
-
 model Order {
-  id              String  @id @default(uuid()) @map("orderId")
+  id              String      @id @default(uuid()) @map("orderId")
   userId          String
   paymentMethod   String
   status          String
-  subtotal        Decimal @db.Decimal(10, 2)
-  shippingFee     Decimal @db.Decimal(10, 2)
-  totalAmount     Decimal @db.Decimal(10, 2)
-  shippingAddress Json    @db.Json
-
-  createdAt    DateTime  @default(now())
-  confirmedAt  DateTime?
-  completedAt  DateTime?
-  cancelledAt  DateTime?
-  cancelReason String?
-
-  // Audit Fields
-  createdBy   String?
-  confirmedBy String?
-  completedBy String?
-  cancelledBy String?
-
-  // Relations
-  user User @relation("UserOrders", fields: [userId], references: [id])
-
-  // Management relations
-  createdByUser   User? @relation("OrderCreator", fields: [createdBy], references: [id])
-  confirmedByUser User? @relation("OrderConfirmer", fields: [confirmedBy], references: [id])
-  completedByUser User? @relation("OrderCompleter", fields: [completedBy], references: [id])
-  cancelledByUser User? @relation("OrderCanceller", fields: [cancelledBy], references: [id])
-
-  items      OrderItem[]
-  staffNotes StaffNote[]
+  subtotal        Decimal     @db.Decimal(10, 2)
+  shippingFee     Decimal     @db.Decimal(10, 2)
+  totalAmount     Decimal     @db.Decimal(10, 2)
+  shippingAddress Json        @db.Json
+  createdAt       DateTime    @default(now())
+  confirmedAt     DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  createdBy       String?
+  confirmedBy     String?
+  completedBy     String?
+  cancelledBy     String?
+  items           OrderItem[]
+  cancelledByUser User?       @relation("OrderCanceller", fields: [cancelledBy], references: [id])
+  completedByUser User?       @relation("OrderCompleter", fields: [completedBy], references: [id])
+  confirmedByUser User?       @relation("OrderConfirmer", fields: [confirmedBy], references: [id])
+  createdByUser   User?       @relation("OrderCreator", fields: [createdBy], references: [id])
+  user            User        @relation("UserOrders", fields: [userId], references: [id])
+  staffNotes      StaffNote[]
 
   @@map("orders")
 }
@@ -202,28 +153,20 @@ model OrderItem {
   unitPrice           Decimal @db.Decimal(10, 2)
   quantity            Int
   lineTotal           Decimal @db.Decimal(10, 2)
-
-  // Relations
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  variant Variant @relation(fields: [variantId], references: [id])
+  order               Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant             Variant @relation(fields: [variantId], references: [id])
 
   @@map("order_items")
 }
-
-// --------------------------------------
-// StaffNote & InventoryTx
-// --------------------------------------
 
 model StaffNote {
   id        String   @id @default(uuid()) @map("noteId")
   orderId   String
   staffId   String
-  content   String   @db.Text
+  content   String
   createdAt DateTime @default(now())
-
-  // Relations
-  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  author User  @relation("NoteAuthor", fields: [staffId], references: [id])
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  author    User     @relation("NoteAuthor", fields: [staffId], references: [id])
 
   @@map("staff_notes")
 }
@@ -236,10 +179,8 @@ model InventoryTx {
   reason    String
   createdBy String
   createdAt DateTime @default(now())
-
-  // Relations
-  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  creator User    @relation("TxCreator", fields: [createdBy], references: [id])
+  creator   User     @relation("TxCreator", fields: [createdBy], references: [id])
+  variant   Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@map("inventory_transactions")
 }

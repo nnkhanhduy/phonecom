@@ -169,5 +169,15 @@ export const api = {
     inventory: {
         getTransactions: () =>
             fetch(`${API_URL}/inventory/transactions`).then(res => handleResponse<any[]>(res)),
+    },
+
+    // --- AI CHAT ---
+    chat: {
+        sendMessage: (message: string, history: any[] = []) =>
+            fetch(`${API_URL}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, history }),
+            }).then(res => handleResponse<{ response: string }>(res)),
     }
 };

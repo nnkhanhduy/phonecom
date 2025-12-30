@@ -1,107 +1,24 @@
 import { Router } from 'express';
-import prisma from '../db.js';
+import * as productController from '../controllers/product.controller.js';
 
 const router = Router();
 
 // Create product with variants
-router.post('/', async (req, res) => {
-    try {
-        const { name, brand, description, imageUrl, variants } = req.body;
-        const product = await prisma.product.create({
-            data: {
-                name,
-                brand,
-                description,
-                imageUrl,
-                status: 'ACTIVE', // Default
-                variants: variants ? {
-                    create: variants,
-                } : undefined,
-            },
-            include: { variants: true },
-        });
-        res.status(201).json(product);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.post('/', productController.createProduct);
 
 // Get all products
-router.get('/', async (req, res) => {
-    try {
-        const products = await prisma.product.findMany({
-            include: { variants: true },
-            orderBy: { createdAt: 'desc' },
-        });
-        res.json(products);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.get('/', productController.getAllProducts);
 
 // Get product by ID
-router.get('/:id', async (req, res) => {
-    try {
-        const product = await prisma.product.findUnique({
-            where: { id: req.params.id },
-            include: { variants: true },
-        });
-        if (!product) {
-            return res.status(404).json({ error: 'Product not found' });
-        }
-        res.json(product);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.get('/:id', productController.getProductById);
 
 // Update product
-router.put('/:id', async (req, res) => {
-    try {
-        const { name, brand, description, imageUrl, status } = req.body;
-        const product = await prisma.product.update({
-            where: { id: req.params.id },
-            data: { name, brand, description, imageUrl, status },
-            include: { variants: true },
-        });
-        res.json(product);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.put('/:id', productController.updateProduct);
 
 // Delete product
-router.delete('/:id', async (req, res) => {
-    try {
-        await prisma.product.delete({
-            where: { id: req.params.id },
-        });
-        res.status(204).send();
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.delete('/:id', productController.deleteProduct);
 
 // Add variant to product
-router.post('/:productId/variants', async (req, res) => {
-    try {
-        const { name, color, capacity, price, stockQuantity, imageUrl } = req.body;
-        const variant = await prisma.variant.create({
-            data: {
-                productId: req.params.productId,
-                name,
-                color,
-                capacity,
-                price,
-                stockQuantity: stockQuantity || 0,
-                status: 'IN_STOCK',
-                imageUrl,
-            },
-        });
-        res.status(201).json(variant);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.post('/:productId/variants', productController.addVariant);
 
 export default router;

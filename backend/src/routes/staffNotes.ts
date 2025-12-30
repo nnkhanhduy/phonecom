@@ -1,98 +1,18 @@
 import { Router } from 'express';
-import prisma from '../db.js';
+import * as staffNoteController from '../controllers/staffNote.controller.js';
 
 const router = Router();
 
 // Add staff note to order
-router.post('/', async (req, res) => {
-    try {
-        const { orderId, authorId, content } = req.body;
-
-        const note = await prisma.staffNote.create({
-            data: {
-                orderId,
-                staffId: authorId, // Mapped to staffId
-                content,
-            },
-            include: {
-                author: {
-                    select: { fullName: true },
-                },
-            },
-        });
-
-        res.status(201).json({
-            id: note.id,
-            content: note.content,
-            createdAt: note.createdAt.toISOString(),
-            authorName: note.author.fullName,
-        });
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.post('/', staffNoteController.addStaffNote);
 
 // Get all notes for an order
-router.get('/order/:orderId', async (req, res) => {
-    try {
-        const notes = await prisma.staffNote.findMany({
-            where: { orderId: req.params.orderId },
-            include: {
-                author: {
-                    select: { fullName: true },
-                },
-            },
-            orderBy: { createdAt: 'desc' },
-        });
-
-        const formattedNotes = notes.map(note => ({
-            id: note.id,
-            content: note.content,
-            createdAt: note.createdAt.toISOString(),
-            authorName: note.author.fullName,
-        }));
-
-        res.json(formattedNotes);
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.get('/order/:orderId', staffNoteController.getOrderNotes);
 
 // Update staff note
-router.put('/:id', async (req, res) => {
-    try {
-        const { content } = req.body;
-        const note = await prisma.staffNote.update({
-            where: { id: req.params.id },
-            data: { content },
-            include: {
-                author: {
-                    select: { fullName: true },
-                },
-            },
-        });
-
-        res.json({
-            id: note.id,
-            content: note.content,
-            createdAt: note.createdAt.toISOString(),
-            authorName: note.author.fullName,
-        });
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.put('/:id', staffNoteController.updateStaffNote);
 
 // Delete staff note
-router.delete('/:id', async (req, res) => {
-    try {
-        await prisma.staffNote.delete({
-            where: { id: req.params.id },
-        });
-        res.status(204).send();
-    } catch (error: any) {
-        res.status(400).json({ error: error.message });
-    }
-});
+router.delete('/:id', staffNoteController.deleteStaffNote);
 
 export default router;

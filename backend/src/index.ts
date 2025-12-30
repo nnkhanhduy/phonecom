@@ -9,6 +9,7 @@ import cartRouter from './routes/cart.js';
 import ordersRouter from './routes/orders.js';
 import staffNotesRouter from './routes/staffNotes.js';
 import inventoryRouter from './routes/inventory.js';
+import chatRouter from './routes/chat.js';
 
 dotenv.config();
 
@@ -33,6 +34,7 @@ app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/staff-notes', staffNotesRouter);
 app.use('/api/inventory', inventoryRouter);
+app.use('/api/chat', chatRouter);
 
 // Health check
 app.get('/health', (req, res) => {
